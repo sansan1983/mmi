@@ -27,6 +27,9 @@ __all__ = [
     "get_trash_dir",
     "get_index_path",
     "get_config_path",
+    "get_memory_db_path",
+    "get_faiss_index_path",
+    "get_faiss_ids_path",
     "ensure_dirs",
 ]
 
@@ -40,6 +43,9 @@ _ACTIVE_SUBDIR = "active"
 _TRASH_SUBDIR = "trash"
 _INDEX_FILENAME = "index.json"
 _CONFIG_FILENAME = "config.toml"
+_MEMORY_DB_FILENAME = "memory.db"
+_FAISS_INDEX_FILENAME = "faiss.index"
+_FAISS_IDS_FILENAME = "faiss_ids.json"
 _ENV_HOME_OVERRIDE = "MMI_HOME"
 
 
@@ -99,6 +105,25 @@ def get_config_path() -> Path:
     Phase 1 还不使用，预留给后续 Phase（模块禁用列表、默认 LLM 等）。
     """
     return get_root() / _CONFIG_FILENAME
+
+
+def get_memory_db_path() -> Path:
+    """返回向量记忆元数据 SQLite 路径（默认 ~/.mmi/memory.db）。"""
+    return get_root() / _MEMORY_DB_FILENAME
+
+
+def get_faiss_index_path() -> Path:
+    """返回 FAISS 索引文件路径（默认 ~/.mmi/faiss.index）。"""
+    return get_root() / _FAISS_INDEX_FILENAME
+
+
+def get_faiss_ids_path() -> Path:
+    """返回 FAISS 索引位置 → memory_id 的映射文件（默认 ~/.mmi/faiss_ids.json）。
+
+    FAISS 本身只存向量不存元数据；vector 位置 i 对应哪个 memory_id 需
+    单独持久化（顺序追加，永不删除——gc 时同步移除即可）。
+    """
+    return get_root() / _FAISS_IDS_FILENAME
 
 
 def ensure_dirs() -> Path:

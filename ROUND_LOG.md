@@ -1,60 +1,69 @@
-# 工作日志 — Round 2.1
-> Phase: 2 | Round: 1  
-> 标题：P0 收尾 — 修 SessionMeta 遗留 + 清理 __pycache__  
-> 开始：2026-06-03  
+# 工作日志 — Round 2.2
+> Phase: 2 | Round: 2
+> 标题：向量记忆(FAISS)落地
+> 开始：2026-06-03
 > 状态：进行中
 
 ## 上轮交接摘要
-- 一期 MVP 完成,302/312 核心测试通过
-- 10 个 SessionMeta 遗留测试 + `cold_since_parsed` 缺失 + `__pycache__` 污染
-- 下一轮:二期 P0,修上述 P0 全部问题
+- Round 2.1 完成:SessionMeta 时间字段类型修复 + race condition 修复
+- 测试 351/351 全绿
+- 下轮:Round 2.2 — 二期 P1:FAISS 向量记忆
 
 ## 本轮计划子任务
-- [x] 创建 venv + 装依赖
-- [x] 跑全量测试,确认 14 失败(11 核心 + 3 fuzzy,3 fuzzy 需 rapidfuzz)
-- [x] 分析根因:`from_dict()` 把时间字符串转 datetime,与 dataclass 字段类型冲突
-- [x] 改 `session.py`:`from_dict` 不再转 datetime,加 `*_parsed` 懒解析属性
-- [x] 改 `gc.py`:用 `cold_since_parsed`/`trashed_at_parsed` 替代手动 `_parse_iso_utc`
-- [x] `gc_zombies` 加 cold→zombie 升级逻辑(支持 `test_gc_zombies_promotes_cold_to_zombie`)
-- [x] 修复 manager race:`_recompute_heat` + `update_summary` 锁内重读+合并+`_atomic_write`
-- [x] 跑全量测试:351 passed(排除 3 个 CLI 集成测试,需预置 `~/.mmi-fusion`)
-- [x] P0 #3 复核:`__pycache__` 实际未跟踪,`.gitignore` 已正确,handover 误判
-- [ ] 写 `docs/HANDOVER/round_2.md`(进行中)
+- [x] 装 FAISS + sentence-transformers
+- [x] 设计 memories 表 schema + 扩 paths.py
+- [x] 实现 memory.py: store_memory / search_semantic / rerank / build_structured_summary / recall_memories
+- [x] 嵌入器抽象: Embedder Protocol + HashEmbedder(测试) + SentenceTransformerEmbedder(生产)
+- [x] context.build_context 集成: LoaderConfig.memory + system prompt 追加 recall 段
+- [x] CLI: mmi memory {search|count|clear}
+- [x] memory 模块测试 24 个
+- [x] 修复 _load_intermediate 空 session 早退 bug(让 memory 也能跑)
+- [x] 修复 rerank 早退条件(top_n >= len → top_n > len)
+- [x] pyproject.toml 加 memory extras
+- [x] 跑全量测试:375 passed
+- [ ] 写 docs/HANDOVER/round_2_2.md(进行中)
 
 ## 执行记录
 | 时间 | 任务 | 结果 | 备注 |
 |---|---|---|---|
-| 19:50 | 读 HANDOVER/PLAN/ARCHITECTURE | ✅ | 一期完成,二期 P0 收尾 |
-| 19:55 | 建 venv + 装包 | ✅ | /tmp/mmi-venv |
-| 20:00 | 跑测试 | ✅ | 14 failed / 303 passed |
-| 20:10 | 分析失败根因 | ✅ | from_dict datetime vs str + cold_since_parsed 缺 + race condition |
-| 20:20 | 改 session.py | ✅ | from_dict + 5 个 *_parsed property |
-| 20:30 | 改 gc.py | ✅ | trashed_at_parsed + cold→zombie 升级 |
-| 20:40 | 修 race condition | ✅ | _recompute_heat + update_summary 锁内重读+合并 |
-| 20:50 | 跑全量测试 | ✅ | 351 passed(0 failed) |
-| 20:55 | 写 round_2.md | 进行中 | |
+| 21:00 | 装 faiss-cpu + sentence-transformers | ✅ | |
+| 21:10 | 写 memory.py 完整实现 | ✅ | 含 Embedder 协议 + Hash 降级 + SQLite + FAISS |
+| 21:30 | context 集成 | ✅ | LoaderConfig.memory + recall 段 |
+| 21:40 | 写 24 个 memory 测试 | ✅ | Hash 假嵌入器避免下载模型 |
+| 21:50 | 修 _load_intermediate 早退 + rerank 条件 | ✅ | |
+| 22:00 | CLI: mmi memory search/count/clear | ✅ | |
+| 22:10 | 全量测试 375/375 | ✅ | |
 
 ## 测试结果
-- 全量(排除 3 CLI 集成):**351 passed, 0 failed**
-- 跑全量含 CLI:358 passed / 3 failed(3 个 CLI 测试需 `~/.mmi-fusion` 预置,环境依赖)
-- 改前 baseline:303 passed / 14 failed
-- 修复增量:11 core tests + 3 fuzzy(rapidfuzz) + 0 回归
+- Round 2.1 baseline:351 passed
+- Round 2.2 final:**375 passed, 0 failed**
+- 新增:24 memory tests
+- 集成:context.py / cli.py / pyproject.toml 改动无回归
 
 ## 改动文件清单
 | 文件 | 改动 |
 |---|---|
-| mmi/core/session.py | `from_dict` 不转 datetime;加 `*_parsed` 5 个 property;加 `_coerce_iso_str` |
-| mmi/core/gc.py | `gc_trash` 用 `trashed_at_parsed`;`gc_zombies` 加 cold→zombie 升级 |
-| mmi/core/manager.py | `_recompute_heat` 锁内重读 + 合并 + `_atomic_write` |
-| mmi/core/summarizer.py | `update_summary` 锁内重读 + 合并 + `_atomic_write` |
-| ROUND_LOG.md | 新建(本文件) |
+| mmi/core/memory.py | 新建(~430 行):完整向量记忆模块 |
+| mmi/core/paths.py | 加 get_memory_db_path / get_faiss_index_path / get_faiss_ids_path |
+| mmi/core/context.py | LoaderConfig.memory + _load_intermediate 集成 recall + compose_messages 注入系统段 |
+| mmi/cli.py | 新增 memory 子命令(search/count/clear) + cmd_memory |
+| pyproject.toml | 加 [memory] extras(faiss-cpu + numpy) |
+| tests/test_memory.py | 新建:24 个单元 + 集成测试 |
+
+## 关键设计决策
+- **嵌入器可注入**:默认 sentence-transformers(本地、零 API key),失败降级 HashEmbedder;测试用 HashEmbedder 避免下载模型
+- **SQLite + FAISS 双文件**:SQLite 存元数据(title/decision/conclusion/todos/raw_excerpt),FAISS 存向量,faiss_ids.json 映射位置→memory_id
+- **rerank 容错**:LLM 异常/返回未知 id → 退回原顺序补齐;无 LLM → 直接按 FAISS 顺序截 top_n
+- **memory.enabled 默认 True**:跨会话记忆是核心卖点,默认开;context 检索失败静默降级,不阻塞主流程
+- **build_structured_summary 规则版**:Round 2.2 阶段不调 LLM(避免慢/不稳定),Round 3 (P2) 升级为 LLM 提取
 
 ## 遗留问题
-- ⚠️ ruff 70 errors(全是既有 unused import / F841,未引入新错;不阻塞 P0 验收)
-- ⚠️ CLI 3 个测试需 `~/.mmi-fusion` 预置目录,不在 CI 范围
-- 💡 manager race fix 用了"锁内重读 + 字段级合并"模式,后续高并发场景可考虑 manager-level lock
+- ⚠️ build_structured_summary 规则版只提 title + conclusion(从 markdown 头/尾),没真做 LLM 提取 → Round 3 升级
+- ⚠️ FTS5 路径未实现(架构文档提了,本轮只做 FAISS,FTS5 留 Round 2.3)
+- ⚠️ 70 个 ruff error(既有,本轮未引入新错)
+- 💡 写入路径:目前是手动调 store_memory,未接到 chat 末尾的自动入库 → Round 2.3 接 summarizer
 
 ## 下轮预告
-- 下一轮:Round 2.2 — 二期 P1:`memory.store_memory()` 实现 + FAISS 集成
+- 下一轮:Round 2.3 — 把 memory 接入 chat 末尾(自动入库)+ 升级 build_structured_summary 为 LLM 版
 - 前置依赖:本轮全部完成 ✅
-- 预估工作量:1.5d
+- 预估工作量:1d

@@ -23,6 +23,10 @@ dependencies = [
 tui = ["textual>=0.50"]
 fuzzy = ["rapidfuzz>=3.0"]
 test = ["pytest>=8.0"]
+memory = [
+    "faiss-cpu>=1.7",
+    "numpy>=1.24",
+]
 
 [project.scripts]
 mmi = "mmi.cli:main"

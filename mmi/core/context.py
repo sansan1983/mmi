@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from . import search, storage
+from .memory import MemoryConfig, recall_memories
 
 if TYPE_CHECKING:
     pass
@@ -62,6 +63,8 @@ class LoaderConfig:
     max_tokens: int = DEFAULT_MAX_TOKENS
     system_prompt_zh: str = "你是一个乐于助人的助手。"
     system_prompt_en: str = "You are a helpful assistant."
+    # 跨会话记忆：开启后会把 user_input 拿去向量检索 + 注入到 system 段
+    memory: MemoryConfig = field(default_factory=MemoryConfig)
 
 
 @dataclass
@@ -71,6 +74,7 @@ class LoadedContext:
     summary: str
     recent_turns: list[dict] = field(default_factory=list)
     hit_turns: list[dict] = field(default_factory=list)
+    recalled_memories: list = field(default_factory=list)   # MemoryRecord 列表
     messages: list[dict] = field(default_factory=list)
     total_chars: int = 0
     estimated_tokens: int = 0
@@ -170,22 +174,28 @@ def _load_intermediate(
     try:
         session = storage.read_session(session_id)
     except (storage.SessionNotFound, storage.SessionCorrupt):
-        return ctx
-    all_turns = storage.parse_turns(session.body)
-    if not all_turns:
-        return ctx
+        session = None
+    all_turns = storage.parse_turns(session.body) if session else []
+    if all_turns:
+        # 3) 最近 N 轮（1 轮 = user + assistant 两条，按 pair 切）
+        n_recent_pairs = max(0, config.recent_turns)
+        recent_pairs = _take_last_pairs(all_turns, n_recent_pairs)
+        ctx.recent_turns = recent_pairs
 
-    # 3) 最近 N 轮（1 轮 = user + assistant 两条，按 pair 切）
-    n_recent_pairs = max(0, config.recent_turns)
-    recent_pairs = _take_last_pairs(all_turns, n_recent_pairs)
-    ctx.recent_turns = recent_pairs
+        # 4) 关键词命中（排除最近 N 轮 + 当前 user input 自身）
+        older = all_turns[: max(0, len(all_turns) - len(recent_pairs))]
+        if older and user_input and config.hit_paragraphs > 0:
+            ctx.hit_turns = search.search_top_k(
+                older, user_input, k=config.hit_paragraphs, language=language
+            )
 
-    # 4) 关键词命中（排除最近 N 轮 + 当前 user input 自身）
-    older = all_turns[: max(0, len(all_turns) - len(recent_pairs))]
-    if older and user_input and config.hit_paragraphs > 0:
-        ctx.hit_turns = search.search_top_k(
-            older, user_input, k=config.hit_paragraphs, language=language
-        )
+    # 5) 跨会话记忆：用 user_input 召回历史相关记忆（不依赖本 session 有 turns）
+    if config.memory.enabled and user_input:
+        try:
+            ctx.recalled_memories = recall_memories(user_input, config=config.memory)
+        except Exception:
+            # 记忆检索失败不阻塞主流程
+            ctx.recalled_memories = []
 
     return ctx
 
@@ -251,6 +261,23 @@ def compose_messages(
             system = f"{system}\n\n会话摘要：{ctx.summary}"
         else:
             system = f"{system}\n\nSession summary: {ctx.summary}"
+
+    # 1.5) 跨会话记忆（Recall 段）
+    if ctx.recalled_memories:
+        if language.startswith("zh"):
+            mem_lines = ["相关历史记忆："]
+            for m in ctx.recalled_memories:
+                title = m.title or "(无标题)"
+                snippet = m.conclusion or m.raw_excerpt or ""
+                mem_lines.append(f"- [{title}] {snippet[:120]}")
+            system = system + "\n\n" + "\n".join(mem_lines)
+        else:
+            mem_lines = ["Relevant memories from past sessions:"]
+            for m in ctx.recalled_memories:
+                title = m.title or "(untitled)"
+                snippet = m.conclusion or m.raw_excerpt or ""
+                mem_lines.append(f"- [{title}] {snippet[:120]}")
+            system = system + "\n\n" + "\n".join(mem_lines)
 
     messages: list[dict] = [{"role": "system", "content": system}]
 
