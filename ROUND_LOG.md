@@ -1,69 +1,60 @@
-# 工作日志 — Round 2.2
-> Phase: 2 | Round: 2
-> 标题：向量记忆(FAISS)落地
-> 开始：2026-06-03
+# 工作日志 — Round 2.3
+> Phase: 2 | Round: 3
+> 标题：memory 接通 chat + LLM 摘要升级 + FTS5 双路
+> 开始：2026-06-04
 > 状态：进行中
 
 ## 上轮交接摘要
-- Round 2.1 完成:SessionMeta 时间字段类型修复 + race condition 修复
-- 测试 351/351 全绿
-- 下轮:Round 2.2 — 二期 P1:FAISS 向量记忆
+- Round 2.2 完成:FAISS + SQLite 记忆模块
+- 测试 375/375 全绿
+- 下轮:Round 2.3 — 自动入库 + LLM 摘要 + FTS5
 
 ## 本轮计划子任务
-- [x] 装 FAISS + sentence-transformers
-- [x] 设计 memories 表 schema + 扩 paths.py
-- [x] 实现 memory.py: store_memory / search_semantic / rerank / build_structured_summary / recall_memories
-- [x] 嵌入器抽象: Embedder Protocol + HashEmbedder(测试) + SentenceTransformerEmbedder(生产)
-- [x] context.build_context 集成: LoaderConfig.memory + system prompt 追加 recall 段
-- [x] CLI: mmi memory {search|count|clear}
-- [x] memory 模块测试 24 个
-- [x] 修复 _load_intermediate 空 session 早退 bug(让 memory 也能跑)
-- [x] 修复 rerank 早退条件(top_n >= len → top_n > len)
-- [x] pyproject.toml 加 memory extras
-- [x] 跑全量测试:375 passed
-- [ ] 写 docs/HANDOVER/round_2_2.md(进行中)
+- [x] summarizer.schedule_summary_update 完成后自动调 memory.store_memory
+- [x] build_structured_summary 升级 LLM 提取版({title, decision, conclusion, todos})
+- [x] FTS5 虚拟表 + 触发器 + search_semantic 双路召回
+- [x] 清 cli.py 重复的 if info/rename
+- [x] 补 12 个新测试(LLM summary 4 + FTS5 7 + auto-store 1)
+- [x] 全量测试 387 passed
+- [ ] 写 docs/HANDOVER/round_2_3.md(进行中)
 
 ## 执行记录
 | 时间 | 任务 | 结果 | 备注 |
 |---|---|---|---|
-| 21:00 | 装 faiss-cpu + sentence-transformers | ✅ | |
-| 21:10 | 写 memory.py 完整实现 | ✅ | 含 Embedder 协议 + Hash 降级 + SQLite + FAISS |
-| 21:30 | context 集成 | ✅ | LoaderConfig.memory + recall 段 |
-| 21:40 | 写 24 个 memory 测试 | ✅ | Hash 假嵌入器避免下载模型 |
-| 21:50 | 修 _load_intermediate 早退 + rerank 条件 | ✅ | |
-| 22:00 | CLI: mmi memory search/count/clear | ✅ | |
-| 22:10 | 全量测试 375/375 | ✅ | |
+| 10:00 | summarizer 自动入库 | ✅ | 失败静默,不阻塞摘要 |
+| 10:10 | LLM 版 build_structured_summary | ✅ | 失败降级规则版,容错 |
+| 10:20 | FTS5 schema + 触发器 | ✅ | external content + AI/AU/AD triggers |
+| 10:30 | 修"database disk image is malformed" | ✅ | 改用 triggers,移除手工 DELETE/INSERT |
+| 10:40 | search_semantic 双路召回(FAISS + FTS5) | ✅ | 去重,FAISS 优先 |
+| 10:50 | cli.py 重复 if | ✅ | info/rename 各去掉一个 |
+| 11:00 | 写 12 个新测试 | ✅ | 全绿 |
+| 11:10 | 全量 387/387 | ✅ | |
 
 ## 测试结果
-- Round 2.1 baseline:351 passed
-- Round 2.2 final:**375 passed, 0 failed**
-- 新增:24 memory tests
-- 集成:context.py / cli.py / pyproject.toml 改动无回归
+- Round 2.2 baseline:375 passed
+- Round 2.3 final:**387 passed, 0 failed**
+- 新增:12 memory tests(LLM summary 4 + FTS5 7 + auto-store 1)
 
 ## 改动文件清单
 | 文件 | 改动 |
 |---|---|
-| mmi/core/memory.py | 新建(~430 行):完整向量记忆模块 |
-| mmi/core/paths.py | 加 get_memory_db_path / get_faiss_index_path / get_faiss_ids_path |
-| mmi/core/context.py | LoaderConfig.memory + _load_intermediate 集成 recall + compose_messages 注入系统段 |
-| mmi/cli.py | 新增 memory 子命令(search/count/clear) + cmd_memory |
-| pyproject.toml | 加 [memory] extras(faiss-cpu + numpy) |
-| tests/test_memory.py | 新建:24 个单元 + 集成测试 |
+| mmi/core/summarizer.py | schedule_summary_update 后台线程成功后自动调 store_memory;加 _read_body_for_memory 辅助 |
+| mmi/core/memory.py | build_structured_summary 升级 LLM 版(失败降级);FTS5 schema + 触发器;_search_fts / _sanitize_fts_query;search_semantic 双路召回 + 去重 |
+| mmi/cli.py | 去掉重复的 if info / if rename |
+| tests/test_memory.py | +12 个测试 |
 
 ## 关键设计决策
-- **嵌入器可注入**:默认 sentence-transformers(本地、零 API key),失败降级 HashEmbedder;测试用 HashEmbedder 避免下载模型
-- **SQLite + FAISS 双文件**:SQLite 存元数据(title/decision/conclusion/todos/raw_excerpt),FAISS 存向量,faiss_ids.json 映射位置→memory_id
-- **rerank 容错**:LLM 异常/返回未知 id → 退回原顺序补齐;无 LLM → 直接按 FAISS 顺序截 top_n
-- **memory.enabled 默认 True**:跨会话记忆是核心卖点,默认开;context 检索失败静默降级,不阻塞主流程
-- **build_structured_summary 规则版**:Round 2.2 阶段不调 LLM(避免慢/不稳定),Round 3 (P2) 升级为 LLM 提取
+- **FTS5 触发器同步**:用 AFTER INSERT/UPDATE/DELETE triggers 自动维护 memories_fts,避免手工 DELETE/INSERT 撞 "external content" 模式的"database disk image is malformed" 错误
+- **双路召回 + FAISS 优先**:FAISS 命中(语义近邻)排前,FTS5 命中(关键词)补后;按 memory_id 去重;任一路失败静默降级
+- **LLM summary 降级**:JSON 解析失败 / LLM 抛异常 → 用原 body 走规则版;LLM 输出的乱码不会被当 title
+- **summarizer 后台自动入库**:与摘要写在同一后台线程,摘要写入失败 → 不入库;入库失败 → 不抛;主流程零感知
 
 ## 遗留问题
-- ⚠️ build_structured_summary 规则版只提 title + conclusion(从 markdown 头/尾),没真做 LLM 提取 → Round 3 升级
-- ⚠️ FTS5 路径未实现(架构文档提了,本轮只做 FAISS,FTS5 留 Round 2.3)
 - ⚠️ 70 个 ruff error(既有,本轮未引入新错)
-- 💡 写入路径:目前是手动调 store_memory,未接到 chat 末尾的自动入库 → Round 2.3 接 summarizer
+- ⚠️ FTS5 query sanitizer 是简化版,复杂 query 表达(如 NEAR / 列查询)未支持
+- 💡 build_structured_summary 的 LLM 提取 prompt 还可以更精细(待实际数据调优)
+- 💡 自动入库触发器与 summarizer 串行;高频 chat 场景下入库会成瓶颈(下轮评估)
 
 ## 下轮预告
-- 下一轮:Round 2.3 — 把 memory 接入 chat 末尾(自动入库)+ 升级 build_structured_summary 为 LLM 版
-- 前置依赖:本轮全部完成 ✅
-- 预估工作量:1d
+- Round 3.0:多 Agent 调度(Orchestrator + Router + Registry)骨架落地
+- 或:Round 2.4 — memory 写入端优化(批量 + 防抖) + 入库触发器独立

@@ -319,3 +319,168 @@ def test_context_memory_failure_does_not_block(isolated_home, fast_embedder, mon
     # 不抛,且 recalled_memories 留空
     assert ctx.recalled_memories == []
     assert len(ctx.messages) >= 1
+
+
+# ---------------------------------------------------------------------------
+# Round 2.3: LLM 版 build_structured_summary
+# ---------------------------------------------------------------------------
+
+
+def test_structured_summary_llm_extracts_fields(isolated_home):
+    """LLM 返回合法 JSON → 4 个字段都被填。"""
+    from mmi.core.llm import Classification, LLMProvider
+
+    class _JsonLLM(LLMProvider):
+        def chat(self, messages, **kw):
+            return '{"title": "postgres 分表", "decision": "用 hash", "conclusion": "性能 OK", "todos": "写文档;压测"}'
+        def classify(self, prompt, *, options):
+            return Classification(choice=options[0], confidence=0.99)
+
+    out = memory.build_structured_summary(
+        "## body\n内容。", language="zh-CN", llm=_JsonLLM(),
+    )
+    assert out["title"] == "postgres 分表"
+    assert out["decision"] == "用 hash"
+    assert out["conclusion"] == "性能 OK"
+    assert "写文档" in out["todos"]
+
+
+def test_structured_summary_llm_strips_markdown_fence(isolated_home):
+    """LLM 包了 ```json fence 也能解析。"""
+    from mmi.core.llm import Classification, LLMProvider
+
+    class _FencedLLM(LLMProvider):
+        def chat(self, messages, **kw):
+            return '```json\n{"title": "T", "decision": "", "conclusion": "C", "todos": ""}\n```'
+        def classify(self, prompt, *, options):
+            return Classification(choice=options[0], confidence=0.99)
+
+    out = memory.build_structured_summary("body", llm=_FencedLLM())
+    assert out["title"] == "T"
+    assert out["conclusion"] == "C"
+
+
+def test_structured_summary_llm_falls_back_on_bad_json(isolated_home):
+    """LLM 返回非 JSON → 降级到规则版,不抛。"""
+    from mmi.core.llm import Classification, LLMProvider
+
+    class _BrokenLLM(LLMProvider):
+        def chat(self, messages, **kw):
+            return "不是 JSON,就是乱说"
+        def classify(self, prompt, *, options):
+            return Classification(choice=options[0], confidence=0.99)
+
+    out = memory.build_structured_summary("## 主题\n内容。", llm=_BrokenLLM())
+    # 降级到规则版,至少 title 应该有
+    assert out["title"] == "主题"
+
+
+def test_structured_summary_llm_falls_back_on_exception(isolated_home):
+    """LLM 抛异常 → 降级到规则版。"""
+    from mmi.core.llm import Classification, LLMProvider
+
+    class _BoomLLM(LLMProvider):
+        def chat(self, messages, **kw):
+            raise RuntimeError("LLM down")
+        def classify(self, prompt, *, options):
+            return Classification(choice=options[0], confidence=0.99)
+
+    out = memory.build_structured_summary("## 主题\n内容。", llm=_BoomLLM())
+    assert out["title"] == "主题"
+
+
+# ---------------------------------------------------------------------------
+# Round 2.3: FTS5 双路召回
+# ---------------------------------------------------------------------------
+
+
+def test_fts5_keyword_match(isolated_home, fast_embedder):
+    """FTS5 关键词命中,即使 FAISS 不命中也能找到。"""
+    memory.store_memory("s1", "## kubernetes 网络原理分析\nCNI plugin。",
+                        embedder=fast_embedder)
+    # 直接调 FTS5 路径
+    hits = memory._search_fts("kubernetes", top_k=5)
+    assert len(hits) >= 1
+    assert any("kubernetes" in h.title for h in hits)
+
+
+def test_fts5_no_match_returns_empty(isolated_home, fast_embedder):
+    memory.store_memory("s1", "## postgres\n内容。", embedder=fast_embedder)
+    hits = memory._search_fts("kubernetes_unknown_term", top_k=5)
+    assert hits == []
+
+
+def test_search_semantic_merges_faiss_and_fts(isolated_home, fast_embedder):
+    """双路召回:FAISS 命中 + FTS5 命中 = 合并去重,FAISS 优先。"""
+    # s1 关键词走 FTS5 命中(可能 FAISS 排后),s2 走 FAISS 命中
+    memory.store_memory("s1", "## kubernetes 网络原理\nCNI 细节。", embedder=fast_embedder)
+    memory.store_memory("s2", "## redis 缓存策略\nTTL 设置。", embedder=fast_embedder)
+    # 用 FAISS 不一定命中的"奇怪"query
+    hits = memory.search_semantic("kubernetes CNI", top_k=5, embedder=fast_embedder)
+    # 至少召回 s1
+    assert any("kubernetes" in h.title for h in hits)
+
+
+def test_search_semantic_dedup(isolated_home, fast_embedder):
+    """FAISS 和 FTS5 命中同一条 → 不重复。"""
+    memory.store_memory("s1", "## postgres 分表\nhash 策略。", embedder=fast_embedder)
+    hits = memory.search_semantic("postgres", top_k=10, embedder=fast_embedder)
+    ids = [h.memory_id for h in hits]
+    assert len(ids) == len(set(ids))  # 去重
+
+
+def test_sanitize_fts_query_english():
+    """英文加 * 通配。"""
+    out = memory._sanitize_fts_query("postgres")
+    assert '"postgres"*' in out
+
+
+def test_sanitize_fts_query_chinese():
+    """中文原样,不带 *。"""
+    out = memory._sanitize_fts_query("分表")
+    assert '"分表"' in out
+    assert "*" not in out.split("AND")[0]
+
+
+def test_sanitize_fts_query_empty():
+    assert memory._sanitize_fts_query("") == ""
+
+
+# ---------------------------------------------------------------------------
+# Round 2.3: summarizer 自动入库
+# ---------------------------------------------------------------------------
+
+
+def test_schedule_summary_auto_stores_memory(isolated_home, fast_embedder):
+    """schedule_summary_update 完成后,记忆应该自动入库。"""
+    import time
+    from mmi.core import summarizer
+    from mmi.core.llm import Classification, LLMProvider
+    from mmi.core.session import Session, SessionMeta
+    from mmi.core import storage
+
+    class _SummaryLLM(LLMProvider):
+        def chat(self, messages, **kw):
+            content = " ".join(m.get("content", "") for m in messages)
+            if "总结" in content or "summary" in content.lower() or "Summarize" in content:
+                return "对话摘要:讨论 postgres 分表"
+            return "reply"
+        def classify(self, prompt, *, options):
+            return Classification(choice=options[0], confidence=0.99)
+
+    sid = "01AAAAAAAAAAAAAAAAAAAAAAAA"  # 26 字符合法 ULID 占位
+    s = Session(meta=SessionMeta.new(sid, title="t"), body="")
+    storage.write_session(s)
+
+    # 加 5 turns(触发 should_update_summary)
+    for i in range(5):
+        storage.append_turn(sid, f"u{i}", f"a{i}")
+
+    llm = _SummaryLLM()
+    t = summarizer.schedule_summary_update(sid, llm, language="zh-CN")
+    t.join(timeout=10)
+    # 后台入库可能略有延迟,等一下
+    time.sleep(0.3)
+
+    # 记忆应该有 1 条
+    assert memory.memory_count() >= 1

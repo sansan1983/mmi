@@ -225,7 +225,18 @@ def schedule_summary_update(
     """
     def _run() -> None:
         try:
-            update_summary(session_id, llm, language=language)
+            body, turns_at = _read_body_for_memory(session_id)
+            ok = update_summary(session_id, llm, language=language)
+            if ok and body:
+                # 摘要写成功后,自动入库到向量记忆(失败静默,不阻塞)
+                from . import memory as memory_module
+                try:
+                    memory_module.store_memory(
+                        session_id, body, turns_at=turns_at,
+                    )
+                except Exception:
+                    # 记忆入库失败不抛:摘要是关键路径,记忆是锦上添花
+                    pass
         except Exception:
             # 后台线程：任何异常都吞掉，不影响主流程
             pass
@@ -237,6 +248,23 @@ def schedule_summary_update(
     )
     t.start()
     return t
+
+
+def _read_body_for_memory(session_id: str) -> tuple[str, int]:
+    """读 body + turns_at,供 _run 在 update_summary 之后入库记忆用。
+
+    与 update_summary 内部 read_session 重复了一次磁盘 IO,但避免在
+    update_summary 的锁内嵌 store_memory(那个锁我们已经释放)。
+
+    Returns:
+        (body, turns_at);读不到时返回 ("", 0)
+    """
+    try:
+        s = storage.read_session(session_id)
+    except (storage.SessionNotFound, storage.SessionCorrupt, OSError):
+        return "", 0
+    n_turns = s.body.count("**User:**")
+    return s.body, n_turns
 
 
 # ---------------------------------------------------------------------------

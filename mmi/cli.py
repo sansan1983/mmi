@@ -646,13 +646,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_rename(args, mgr)
     if args.command == "info":
         return cmd_info(args, mgr)
-    if args.command == "rename":
-        return cmd_rename(args, mgr)
     if args.command == "inspect":
         return cmd_inspect(args, mgr)
-    if args.command == "info":
-        return cmd_info(args, mgr)
-
     if args.command == "chat":
         return cmd_chat(args, mgr)
     if args.command == "archive":

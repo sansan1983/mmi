@@ -75,6 +75,28 @@ CREATE TABLE IF NOT EXISTS memories (
 );
 CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);
 CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+    title, decision, conclusion, todos, raw_excerpt,
+    content='memories', content_rowid='rowid',
+    tokenize='unicode61'
+);
+
+-- FTS5 external content 模式:用触发器自动同步,避免手工 DELETE/INSERT 撞内容表
+CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
+    INSERT INTO memories_fts(rowid, title, decision, conclusion, todos, raw_excerpt)
+    VALUES (new.rowid, new.title, new.decision, new.conclusion, new.todos, new.raw_excerpt);
+END;
+CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, title, decision, conclusion, todos, raw_excerpt)
+    VALUES ('delete', old.rowid, old.title, old.decision, old.conclusion, old.todos, old.raw_excerpt);
+END;
+CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, title, decision, conclusion, todos, raw_excerpt)
+    VALUES ('delete', old.rowid, old.title, old.decision, old.conclusion, old.todos, old.raw_excerpt);
+    INSERT INTO memories_fts(rowid, title, decision, conclusion, todos, raw_excerpt)
+    VALUES (new.rowid, new.title, new.decision, new.conclusion, new.todos, new.raw_excerpt);
+END;
 """
 
 
@@ -320,22 +342,37 @@ def build_structured_summary(
     body: str,
     *,
     language: str = "zh-CN",
+    llm: Any = None,
 ) -> dict[str, str]:
-    """从对话正文提取结构化摘要占位（纯规则，不调 LLM）。
+    """从对话正文提取结构化摘要。
 
-    Phase 2 阶段先用规则抽出：取首段当 title、取末段当 conclusion、其余留空。
-    Round 3 (P2) 计划升级为 LLM 提取（{主题, 决策, 结论, 待办}）。
+    两种模式:
+      - LLM 模式(传 llm):让 LLM 抽 {主题, 决策, 关键结论, 待办} 四个字段
+      - 规则模式(默认,不传 llm):从 markdown 头/尾提 title + conclusion
+
+    LLM 模式失败时自动降级到规则模式,不抛错(摘要是辅助,坏了别影响主流程)。
 
     Args:
         body: Markdown body
-        language: 输出语言（暂不影响规则版）
+        language: 输出语言(影响 prompt)
+        llm: LLMProvider(要有 chat 方法)
 
     Returns:
-        dict with keys: title, decision, conclusion, todos
+        dict with keys: title, decision, conclusion, todos(都是 str)
     """
     if not body or not body.strip():
         return {"title": "", "decision": "", "conclusion": "", "todos": ""}
-    # 取首段非空文本（去 markdown 装饰）
+    if llm is not None:
+        try:
+            return _build_structured_summary_llm(body, language=language, llm=llm)
+        except Exception:
+            # 降级到规则版
+            pass
+    return _build_structured_summary_rules(body)
+
+
+def _build_structured_summary_rules(body: str) -> dict[str, str]:
+    """规则版:从 markdown 头/尾提 title + conclusion。"""
     lines = [ln.strip() for ln in body.splitlines() if ln.strip()]
     title = ""
     for ln in lines:
@@ -346,6 +383,78 @@ def build_structured_summary(
         title = lines[0][:80]
     conclusion = lines[-1][:200] if lines else ""
     return {"title": title, "decision": "", "conclusion": conclusion, "todos": ""}
+
+
+_STRUCTURED_PROMPT_ZH = (
+    "请从以下对话中提取结构化摘要,严格用 JSON 格式输出,字段固定为:\n"
+    '  {"title": "...", "decision": "...", "conclusion": "...", "todos": "..."}\n'
+    "- title: 一句话主题(<= 30 字)\n"
+    "- decision: 做出的关键决策(无则空字符串)\n"
+    "- conclusion: 关键结论(无则空字符串)\n"
+    "- todos: 待办事项,多条用「;」分隔(无则空字符串)\n"
+    "只输出 JSON,不要任何前后缀。"
+)
+_STRUCTURED_PROMPT_EN = (
+    "Extract a structured summary from the conversation below. "
+    'Output STRICT JSON with exactly these fields:\n'
+    '  {"title": "...", "decision": "...", "conclusion": "...", "todos": "..."}\n'
+    "- title: one-line topic (<= 30 chars)\n"
+    "- decision: key decision made (empty if none)\n"
+    "- conclusion: key conclusion (empty if none)\n"
+    "- todos: pending items, ';' separated (empty if none)\n"
+    "Output JSON only, no prefix or explanation."
+)
+
+
+def _build_structured_summary_llm(
+    body: str, *, language: str, llm: Any,
+) -> dict[str, str]:
+    """LLM 抽 {主题, 决策, 结论, 待办}。失败由调用方降级。"""
+    prompt = _STRUCTURED_PROMPT_ZH if language.startswith("zh") else _STRUCTURED_PROMPT_EN
+    # 截断 body 避免 prompt 过长(8k 字符够用)
+    body_truncated = body[:8000]
+    user_msg = (
+        f"{prompt}\n\n对话全文:\n{body_truncated}"
+        if language.startswith("zh")
+        else f"{prompt}\n\nConversation:\n{body_truncated}"
+    )
+    raw = llm.chat(
+        [
+            {"role": "user", "content": user_msg},
+        ],
+        max_tokens=300,
+        temperature=0.0,
+    )
+    return _parse_structured_json(raw, body_for_fallback=body)
+
+
+def _parse_structured_json(
+    raw: str, *, body_for_fallback: str,
+) -> dict[str, str]:
+    """从 LLM 输出里抠 JSON。解析失败 → 用原 body 走规则版(不污染)。"""
+    import json
+    import re
+    text = (raw or "").strip()
+    # 去掉 markdown 代码块围栏
+    text = re.sub(r"^```(?:json)?\s*", "", text)
+    text = re.sub(r"\s*```$", "", text)
+    # 找第一个 { 到最后一个 }
+    start = text.find("{")
+    end = text.rfind("}")
+    if start < 0 or end < 0 or end <= start:
+        return _build_structured_summary_rules(body_for_fallback)
+    try:
+        obj = json.loads(text[start:end + 1])
+    except json.JSONDecodeError:
+        return _build_structured_summary_rules(body_for_fallback)
+    if not isinstance(obj, dict):
+        return _build_structured_summary_rules(body_for_fallback)
+    return {
+        "title": str(obj.get("title", "") or "").strip()[:200],
+        "decision": str(obj.get("decision", "") or "").strip()[:500],
+        "conclusion": str(obj.get("conclusion", "") or "").strip()[:500],
+        "todos": str(obj.get("todos", "") or "").strip()[:500],
+    }
 
 
 def store_memory(
@@ -387,7 +496,7 @@ def store_memory(
     except Exception:
         vector = []
 
-    # 2) SQLite 写元数据（始终）
+    # 2) SQLite 写元数据（始终）。FTS5 同步由 _MEMORY_SCHEMA 里的触发器自动处理。
     record = MemoryRecord(
         memory_id=memory_id,
         session_id=session_id,
@@ -441,19 +550,50 @@ def search_semantic(
     top_k: int = DEFAULT_TOP_K,
     embedder: Embedder | None = None,
 ) -> list[MemoryRecord]:
-    """语义检索：embedding(query) → FAISS top-k → 返回候选 MemoryRecord。
+    """双路语义检索:FAISS(向量) + FTS5(关键词) → 合并去重 → top-k。
+
+    双路策略:
+      - FAISS 召 top_k 个(语义近邻)
+      - FTS5 召 top_k 个(关键词命中)
+      - 按 memory_id 合并去重;FAISS 命中的优先(语义更准),FTS5 命中的补在后面
 
     Args:
         query: 用户输入 / 当前 session 的 summary
-        top_k: 召回数量
+        top_k: 每路召回数量
         embedder: 可选外部 embedder
 
     Returns:
-        候选 MemoryRecord 列表（按 FAISS L2 距离升序）。FAISS 不可用 /
-        索引为空 → 返回空列表。
+        候选 MemoryRecord 列表(去重后 ≤ 2*top_k)。FAISS 不可用 / 索引空 → 退化为纯 FTS5。
     """
     if not query or not query.strip():
         return []
+    faiss_hits: list[MemoryRecord] = []
+    try:
+        faiss_hits = _search_faiss(query, top_k=top_k, embedder=embedder)
+    except Exception:
+        faiss_hits = []
+    fts_hits: list[MemoryRecord] = []
+    try:
+        fts_hits = _search_fts(query, top_k=top_k)
+    except Exception:
+        fts_hits = []
+    # 合并:FAISS 在前(优先级高),FTS5 补未在 FAISS 命中的
+    seen: set[str] = set()
+    merged: list[MemoryRecord] = []
+    for c in faiss_hits + fts_hits:
+        if c.memory_id in seen:
+            continue
+        seen.add(c.memory_id)
+        merged.append(c)
+        if len(merged) >= top_k:
+            break
+    return merged
+
+
+def _search_faiss(
+    query: str, *, top_k: int, embedder: Embedder | None,
+) -> list[MemoryRecord]:
+    """单跑 FAISS 路径(供双路 + 测试用)。"""
     emb = embedder or get_embedder()
     try:
         vector = emb.embed(query)
@@ -480,8 +620,64 @@ def search_semantic(
     if not positions:
         return []
     memory_ids = [ids[p] for p in positions]
+    return _rows_to_records(memory_ids, fallback_vector=vector)
 
-    # 从 SQLite 取完整记录
+
+def _search_fts(query: str, *, top_k: int) -> list[MemoryRecord]:
+    """FTS5 关键词路径(供双路 + 测试用)。"""
+    if not query or not query.strip():
+        return []
+    # 简单词法清洗:FTS5 unicode61 接受原 query
+    fts_query = _sanitize_fts_query(query)
+    if not fts_query:
+        return []
+    try:
+        with _db_lock:
+            conn = _get_conn()
+            rows = conn.execute(
+                """
+                SELECT m.* FROM memories_fts f
+                JOIN memories m ON m.rowid = f.rowid
+                WHERE memories_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+                """,
+                (fts_query, top_k),
+            ).fetchall()
+    except Exception:
+        return []
+    return [MemoryRecord.from_row(r) for r in rows]
+
+
+def _sanitize_fts_query(q: str) -> str:
+    """把用户输入清洗成 FTS5 MATCH 表达式。
+
+    FTS5 语法里很多字符是运算符(`*`, `:`, `(`, `)`, `"`, `-` 等);
+    直接传可能触发 syntax error。这里只保留 unicode word 字符 + 中文,
+    多词用 AND 串起来,保证可匹配 + 不报错。
+    """
+    import re
+    # 拆词:中英文按 unicode 类别,英文按空格
+    tokens = re.findall(r"[\w一-鿿]+", q, re.UNICODE)
+    tokens = [t for t in tokens if len(t) >= 1][:10]  # 限 10 词
+    if not tokens:
+        return ""
+    # 英文加 *,中文直接(unicode61 不用 *)
+    parts = []
+    for t in tokens:
+        if re.match(r"^[A-Za-z0-9_]+$", t):
+            parts.append(f'"{t}"*')
+        else:
+            parts.append(f'"{t}"')
+    return " AND ".join(parts)
+
+
+def _rows_to_records(
+    memory_ids: list[str], *, fallback_vector: list[float] | None = None,
+) -> list[MemoryRecord]:
+    """按 memory_id 顺序从 SQLite 取完整记录。"""
+    if not memory_ids:
+        return []
     with _db_lock:
         conn = _get_conn()
         placeholders = ",".join("?" for _ in memory_ids)
@@ -491,12 +687,13 @@ def search_semantic(
         ).fetchall()
     by_id = {row["memory_id"]: row for row in rows}
     out: list[MemoryRecord] = []
-    for mid, pos in zip(memory_ids, positions):
+    for mid in memory_ids:
         row = by_id.get(mid)
         if row is None:
             continue
         rec = MemoryRecord.from_row(row)
-        rec.vector = vector    # 把 query 的 vector 复用,供 rerank 用
+        if fallback_vector is not None:
+            rec.vector = fallback_vector
         out.append(rec)
     return out
 
@@ -630,6 +827,7 @@ def clear_memories() -> None:
     """清空所有记忆（测试用 / CLI 显式 reset）。"""
     with _db_lock:
         conn = _get_conn()
+        # FTS5 由触发器自动同步(DELETE on memories 触发 DELETE on memories_fts)
         conn.execute("DELETE FROM memories")
         conn.commit()
     with _faiss_lock:
