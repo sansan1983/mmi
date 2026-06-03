@@ -17,10 +17,10 @@ _mmi_root = os.environ.get("MMI_ROOT", "/home/ubuntu/mmi-fusion")
 if _mmi_root not in sys.path:
     sys.path.insert(0, _mmi_root)
 
-from mmi.core import storage as storage_mod
-from mmi.core import heat as heat_mod
-from mmi.core import gc as gc_mod
-from mmi.core import paths as paths_mod
+from mmi.core import storage as storage_mod  # noqa: E402
+from mmi.core import heat as heat_mod  # noqa: E402
+from mmi.core import gc as gc_mod  # noqa: E402
+from mmi.core import paths as paths_mod  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -60,7 +60,7 @@ def check_imports() -> dict:
         ("mmi.core.manager", "manager"),
     ]
     ok, fail = 0, 0
-    print(f"\n[1/5] Module imports...")
+    print("\n[1/5] Module imports...")
     for mod_name, label in modules:
         try:
             __import__(mod_name)
@@ -82,7 +82,7 @@ def check_sessions() -> dict:
     """遍历所有会话，检查文件完整性和状态一致性。"""
     results = {"active": 0, "warm": 0, "cold": 0, "zombie": 0, "corrupt": 0, "trash": 0}
     sids = storage_mod.list_session_ids()
-    print(f"\n[2/5] Session integrity...")
+    print("\n[2/5] Session integrity...")
     print(f"  Sessions: {len(sids)} total", end="")
     for label in ("active", "warm", "cold", "zombie", "corrupt"):
         print(f" | {label}={results[label]}", end="")
@@ -127,7 +127,7 @@ def check_sessions() -> dict:
 
 def check_filesystem() -> dict:
     """检查关键目录和文件。"""
-    print(f"\n[3/5] File system...")
+    print("\n[3/5] File system...")
     results = {}
     for key, getter in [
         ("sessions", paths_mod.get_sessions_dir),
@@ -151,7 +151,7 @@ def check_filesystem() -> dict:
 
 def check_heat_consistency() -> dict:
     """验证 stored heat 与 computed heat 是否一致。"""
-    print(f"\n[4/5] Heat consistency...")
+    print("\n[4/5] Heat consistency...")
     issues = []
     sids = storage_mod.list_session_ids()
 
@@ -182,7 +182,7 @@ def check_heat_consistency() -> dict:
 
 def check_gc() -> dict:
     """GC dry-run，检查 trash 和 zombie 状态。"""
-    print(f"\n[5/5] GC dry-run...")
+    print("\n[5/5] GC dry-run...")
     try:
         report = gc_mod.gc_all(dry_run=True)
         print(f"  Trash:  {len(report.trash_entries)} entries")

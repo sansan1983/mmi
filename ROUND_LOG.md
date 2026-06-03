@@ -1,60 +1,60 @@
-# 工作日志 — Round 2.3
-> Phase: 2 | Round: 3
-> 标题：memory 接通 chat + LLM 摘要升级 + FTS5 双路
+# 工作日志 — Round 2.4
+> Phase: 2 | Round: 4
+> 标题：memory 收尾(去重 + 拆独立线程 + 清 ruff)
 > 开始：2026-06-04
 > 状态：进行中
 
 ## 上轮交接摘要
-- Round 2.2 完成:FAISS + SQLite 记忆模块
-- 测试 375/375 全绿
-- 下轮:Round 2.3 — 自动入库 + LLM 摘要 + FTS5
+- Round 2.3 完成:FTS5 双路召回 + LLM 摘要 + summarizer 自动入库
+- 测试 387/387 全绿
+- 下轮:Round 2.4 — memory 写入优化 + 清 ruff
 
 ## 本轮计划子任务
-- [x] summarizer.schedule_summary_update 完成后自动调 memory.store_memory
-- [x] build_structured_summary 升级 LLM 提取版({title, decision, conclusion, todos})
-- [x] FTS5 虚拟表 + 触发器 + search_semantic 双路召回
-- [x] 清 cli.py 重复的 if info/rename
-- [x] 补 12 个新测试(LLM summary 4 + FTS5 7 + auto-store 1)
-- [x] 全量测试 387 passed
-- [ ] 写 docs/HANDOVER/round_2_3.md(进行中)
+- [x] summarizer.store_memory 拆出独立后台线程(`_schedule_memory_store`)
+- [x] 加 content_hash 字段 + 去重逻辑(同 body 重复入库跳过)
+- [x] 清 35 个 ruff error(全部修复:24 自动 + 11 手动)
+- [x] 加 8 个新测试(去重 6 + 独立线程 2)
+- [x] 全量测试 395 passed
+- [ ] 写 docs/HANDOVER/round_2_4.md(进行中)
 
 ## 执行记录
 | 时间 | 任务 | 结果 | 备注 |
 |---|---|---|---|
-| 10:00 | summarizer 自动入库 | ✅ | 失败静默,不阻塞摘要 |
-| 10:10 | LLM 版 build_structured_summary | ✅ | 失败降级规则版,容错 |
-| 10:20 | FTS5 schema + 触发器 | ✅ | external content + AI/AU/AD triggers |
-| 10:30 | 修"database disk image is malformed" | ✅ | 改用 triggers,移除手工 DELETE/INSERT |
-| 10:40 | search_semantic 双路召回(FAISS + FTS5) | ✅ | 去重,FAISS 优先 |
-| 10:50 | cli.py 重复 if | ✅ | info/rename 各去掉一个 |
-| 11:00 | 写 12 个新测试 | ✅ | 全绿 |
-| 11:10 | 全量 387/387 | ✅ | |
+| 11:30 | _schedule_memory_store 拆独立线程 | ✅ | 与 update_summary 解耦 |
+| 11:40 | content_hash + 去重 | ✅ | sha256[:16],同 body 返旧 record |
+| 11:50 | ruff --fix 自动修 24 个 | ✅ | F401/F541 等 |
+| 12:00 | 手动修 11 个 ruff | ✅ | E402 noqa / F841 / E741 / 显式 re-export |
+| 12:10 | 8 个新测试 | ✅ | |
+| 12:20 | 全量 395/395 | ✅ | |
 
 ## 测试结果
-- Round 2.2 baseline:375 passed
-- Round 2.3 final:**387 passed, 0 failed**
-- 新增:12 memory tests(LLM summary 4 + FTS5 7 + auto-store 1)
+- Round 2.3 baseline:387 passed
+- Round 2.4 final:**395 passed, 0 failed**
+- 新增:8 memory tests(6 dedup + 2 thread)
+- ruff:`All checks passed!`(0 error)
 
 ## 改动文件清单
 | 文件 | 改动 |
 |---|---|
-| mmi/core/summarizer.py | schedule_summary_update 后台线程成功后自动调 store_memory;加 _read_body_for_memory 辅助 |
-| mmi/core/memory.py | build_structured_summary 升级 LLM 版(失败降级);FTS5 schema + 触发器;_search_fts / _sanitize_fts_query;search_semantic 双路召回 + 去重 |
-| mmi/cli.py | 去掉重复的 if info / if rename |
-| tests/test_memory.py | +12 个测试 |
+| mmi/core/summarizer.py | `_run` 只跑 update_summary,成功后调 `_schedule_memory_store` 起独立线程入库;移除冗余 `current_turns` 变量 |
+| mmi/core/memory.py | schema 加 `content_hash` 列 + 索引;`store_memory` 加 hash 去重逻辑 + `_get_by_hash` 辅助;FAISS `I` 变量名改 `idx_indices`(消 E741) |
+| mmi/__init__.py | `SessionState as SessionState` 显式 re-export |
+| mmi/cli.py | 移除未用 `p_tui` / `p_doctor` / `p_stat` / `title` 局部变量 |
+| mmi/tools/doctor.py | 4 个 import 加 `noqa: E402` |
+| tests/test_memory.py | +8 个 Round 2.4 测试 |
 
 ## 关键设计决策
-- **FTS5 触发器同步**:用 AFTER INSERT/UPDATE/DELETE triggers 自动维护 memories_fts,避免手工 DELETE/INSERT 撞 "external content" 模式的"database disk image is malformed" 错误
-- **双路召回 + FAISS 优先**:FAISS 命中(语义近邻)排前,FTS5 命中(关键词)补后;按 memory_id 去重;任一路失败静默降级
-- **LLM summary 降级**:JSON 解析失败 / LLM 抛异常 → 用原 body 走规则版;LLM 输出的乱码不会被当 title
-- **summarizer 后台自动入库**:与摘要写在同一后台线程,摘要写入失败 → 不入库;入库失败 → 不抛;主流程零感知
+- **入库独立线程**:`_schedule_memory_store` 单独 daemon 线程,失败静默。update_summary 跑完即释放线程,避免入库 IO 拖慢摘要线程
+- **content_hash 去重**:用 `sha256(body)[:16]` 作为 16 字符短 hash,既稳定(同 body 同 hash)又轻量(不占空间)。同 hash 命中 → 直接返旧 record,不重算 embedding
+- **FTS5 + content_hash 索引**:`idx_memories_hash` 让去重查询走索引(实际单 session 量小,扫表也无所谓,索引为后续规模留口)
+- **ruff 0 error**:自动修 24 个 + 手动修 11 个(已显式 re-export / noqa / 重命名)
 
 ## 遗留问题
-- ⚠️ 70 个 ruff error(既有,本轮未引入新错)
-- ⚠️ FTS5 query sanitizer 是简化版,复杂 query 表达(如 NEAR / 列查询)未支持
-- 💡 build_structured_summary 的 LLM 提取 prompt 还可以更精细(待实际数据调优)
-- 💡 自动入库触发器与 summarizer 串行;高频 chat 场景下入库会成瓶颈(下轮评估)
+- ⚠️ Round 3.0 多 Agent 调度 还没开始(原本在 2.3 交接里建议,2.4 没碰)
+- 💡 LLM summary prompt 仍可调优(实测数据)
+- 💡 FTS5 query sanitizer 简化版(同 2.3 遗留)
 
 ## 下轮预告
-- Round 3.0:多 Agent 调度(Orchestrator + Router + Registry)骨架落地
-- 或:Round 2.4 — memory 写入端优化(批量 + 防抖) + 入库触发器独立
+- Round 3.0 — 多 Agent 调度(Orchestrator / Router / Registry / 3 个内置 Agent 骨架)
+- 或:继续 memory 调优(批量入库 / 索引合并)
+- 预估:2-3d

@@ -132,13 +132,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # tui
-    p_tui = sub.add_parser("tui", help="启动 TUI（textual）")
+    sub.add_parser("tui", help="启动 TUI（textual）")
 
     # doctor
-    p_doctor = sub.add_parser("doctor", help="系统诊断 — 检查模块/会话/文件系统/heat一致性/GC状态")
+    sub.add_parser("doctor", help="系统诊断 — 检查模块/会话/文件系统/heat一致性/GC状态")
 
     # stat
-    p_stat = sub.add_parser("stat", help="显示会话统计（总数/各状态/总大小）")
+    sub.add_parser("stat", help="显示会话统计（总数/各状态/总大小）")
 
     # export
     p_export = sub.add_parser("export", help="导出会话为 JSON 或 Markdown")
@@ -228,7 +228,6 @@ def cmd_list(args, mgr) -> int:
     if args.state != "all":
         print("  [filter: state={}]".format(args.state))
     for i, s in enumerate(sessions, 1):
-        title = s.title if s.title else i18n.t("list.entry.unnamed").split(".", 1)[1].strip().split("[")[0].strip()
         # 简化：直接按 key 渲染，title 为空时用 unnamed 版
         if s.title:
             print(i18n.t("list.entry", index=i, title=s.title, heat=s.heat, state=s.state))
@@ -422,10 +421,10 @@ def cmd_export(args, mgr) -> int:
     else:  # markdown
         lines_md = [
             f"# {meta.title or 'Untitled Session'}",
-            f"",
+            "",
             f"**Session ID**: `{meta.session_id}`  |  **Agent**: {meta.agent_id}  |  **State**: {meta.state}",
             f"**Created**: {meta.created_at.date()}  |  **Updated**: {meta.updated_at.date()}  |  **Heat**: {meta.heat:.4f}",
-            f"",
+            "",
         ]
         for t in data["turns"]:
             lines_md.append(f"## {t['role'].capitalize()}")

@@ -17,7 +17,7 @@ ARCHITECTURE §3 + Phase 5 决策：折叠协议是 TUI 私有，**不动 core.b
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 __all__ = [
     "Block",

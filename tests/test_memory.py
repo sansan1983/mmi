@@ -484,3 +484,81 @@ def test_schedule_summary_auto_stores_memory(isolated_home, fast_embedder):
 
     # 记忆应该有 1 条
     assert memory.memory_count() >= 1
+
+
+# ---------------------------------------------------------------------------
+# Round 2.4: 内容 hash 去重
+# ---------------------------------------------------------------------------
+
+
+def test_store_dedup_same_body(isolated_home, fast_embedder):
+    """同 body 重复入库 → 不写盘,返回旧 record。"""
+    r1 = memory.store_memory("s1", "## 主题\n内容。", embedder=fast_embedder)
+    assert r1 is not None
+    assert memory.memory_count() == 1
+    r2 = memory.store_memory("s1", "## 主题\n内容。", embedder=fast_embedder)
+    assert r2 is not None
+    assert r2.memory_id == r1.memory_id
+    assert memory.memory_count() == 1   # 没新增
+
+
+def test_store_dedup_different_body(isolated_home, fast_embedder):
+    """不同 body → 正常入库。"""
+    memory.store_memory("s1", "## A\ncontent A", embedder=fast_embedder)
+    memory.store_memory("s1", "## B\ncontent B", embedder=fast_embedder)
+    assert memory.memory_count() == 2
+
+
+def test_content_hash_stable(isolated_home):
+    """同 body → 同 hash。"""
+    h1 = memory._content_hash("hello world")
+    h2 = memory._content_hash("hello world")
+    assert h1 == h2
+    assert len(h1) == 16    # sha256[:16]
+
+
+def test_content_hash_different():
+    """不同 body → 不同 hash。"""
+    assert memory._content_hash("a") != memory._content_hash("b")
+
+
+def test_get_by_hash_returns_record(isolated_home, fast_embedder):
+    r1 = memory.store_memory("s1", "## X\ncontent", embedder=fast_embedder)
+    h = memory._content_hash("## X\ncontent")
+    r2 = memory._get_by_hash(h)
+    assert r2 is not None
+    assert r2.memory_id == r1.memory_id
+
+
+def test_get_by_hash_missing(isolated_home):
+    assert memory._get_by_hash("nonexistent") is None
+
+
+# ---------------------------------------------------------------------------
+# Round 2.4: 入库独立线程
+# ---------------------------------------------------------------------------
+
+
+def test_schedule_memory_store_runs(isolated_home, fast_embedder):
+    """_schedule_memory_store 起独立线程跑 store_memory。"""
+    from mmi.core import summarizer
+    from mmi.core.session import Session
+    from mmi.core.session import SessionMeta
+    from mmi.core import storage
+
+    sid = "01AAAAAAAAAAAAAAAAAAAAAAAA"
+    s = Session(meta=SessionMeta.new(sid, title="t"), body="## T\n内容。")
+    storage.write_session(s)
+
+    t = summarizer._schedule_memory_store(sid)
+    t.join(timeout=5)
+    assert memory.memory_count() >= 1
+
+
+def test_schedule_memory_store_failure_silent(isolated_home):
+    """_schedule_memory_store 在 session 不存在时也静默,不抛。"""
+    from mmi.core import summarizer
+    t = summarizer._schedule_memory_store("01BBBBBBBBBBBBBBBBBBBBBBBB")
+    t.join(timeout=5)
+    # 不报错,count 也不变
+    assert memory.memory_count() == 0

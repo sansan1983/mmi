@@ -20,7 +20,6 @@ GC 冷热分层设计（Round 0.4）：
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path

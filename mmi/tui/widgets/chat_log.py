@@ -14,7 +14,6 @@ ARCHITECTURE Phase 5：包 RichLog，暴露：
 
 from __future__ import annotations
 
-from typing import Iterable
 
 from rich.text import Text
 from textual.widgets import RichLog, Static

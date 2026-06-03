@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from mmi.agent.modes import ThinkingMode
 from mmi.agent.router import IntentType
 from mmi.agent.skill import SkillLibrary
-from mmi.agent.trace import TraceRecord, Tracer
+from mmi.agent.trace import Tracer
 from mmi.agent.validate import Validator
 
 if TYPE_CHECKING:

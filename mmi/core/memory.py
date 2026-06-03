@@ -27,7 +27,6 @@ import json
 import sqlite3
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -71,10 +70,12 @@ CREATE TABLE IF NOT EXISTS memories (
     decision     TEXT,
     conclusion   TEXT,
     todos        TEXT,
-    raw_excerpt  TEXT
+    raw_excerpt  TEXT,
+    content_hash TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_memories_session ON memories(session_id);
 CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
+CREATE INDEX IF NOT EXISTS idx_memories_hash ON memories(content_hash);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
     title, decision, conclusion, todos, raw_excerpt,
@@ -118,6 +119,7 @@ class MemoryRecord:
     conclusion: str = ""
     todos: str = ""
     raw_excerpt: str = ""
+    content_hash: str = ""
     vector: list[float] | None = None    # 加载时从 FAISS 取，存储时无
 
     @classmethod
@@ -132,8 +134,14 @@ class MemoryRecord:
             conclusion=row["conclusion"] or "",
             todos=row["todos"] or "",
             raw_excerpt=row["raw_excerpt"] or "",
+            content_hash=row["content_hash"] or "",
             vector=vector,
         )
+
+
+def _content_hash(body: str) -> str:
+    """同 body → 同 hash,用于去重。"""
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
 
 
 @dataclass
@@ -476,8 +484,16 @@ def store_memory(
 
     Returns:
         写入的 MemoryRecord；embedding 失败 / faiss 不可用 → 返回 record 但 vector=None
-        且不写 FAISS（SQLite 仍写，检索时降级到 L2 距离不可用时的"无候选"）
+        且不写 FAISS（SQLite 仍写，检索时降级到 L2 距离不可用时的"无候选"）。
+        同 body 重复入库 → 返回旧 record,不再写盘/重算向量（去重）。
     """
+    if not body or not body.strip():
+        return None
+    body_hash = _content_hash(body)
+    # 0) 去重：同 hash 已存在 → 返回旧 record
+    existing = _get_by_hash(body_hash)
+    if existing is not None:
+        return existing
     emb = embedder or get_embedder()
     struct = build_structured_summary(body)
     raw_excerpt = (summary or struct["title"] or body)[:300]
@@ -507,6 +523,7 @@ def store_memory(
         conclusion=struct["conclusion"],
         todos=struct["todos"],
         raw_excerpt=raw_excerpt,
+        content_hash=body_hash,
         vector=vector if vector else None,
     )
     with _db_lock:
@@ -515,11 +532,12 @@ def store_memory(
             """
             INSERT OR REPLACE INTO memories
                 (memory_id, session_id, created_at, turns_at,
-                 title, decision, conclusion, todos, raw_excerpt)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 title, decision, conclusion, todos, raw_excerpt, content_hash)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (record.memory_id, record.session_id, record.created_at, record.turns_at,
-             record.title, record.decision, record.conclusion, record.todos, record.raw_excerpt),
+             record.title, record.decision, record.conclusion, record.todos, record.raw_excerpt,
+             record.content_hash),
         )
         conn.commit()
 
@@ -527,10 +545,8 @@ def store_memory(
     if vector:
         try:
             with _faiss_lock:
-                import faiss
                 idx = _load_faiss_index(emb.dim)
                 ids = _load_faiss_ids()
-                v = faiss.vector_to_array  # type: ignore[attr-defined]
                 import numpy as np
                 vec = np.array([vector], dtype="float32")
                 idx.add(vec)
@@ -542,6 +558,19 @@ def store_memory(
             pass
 
     return record
+
+
+def _get_by_hash(content_hash: str) -> MemoryRecord | None:
+    """按 content_hash 取 record(去重用)。无则 None。"""
+    if not content_hash:
+        return None
+    with _db_lock:
+        conn = _get_conn()
+        row = conn.execute(
+            "SELECT * FROM memories WHERE content_hash = ? LIMIT 1",
+            (content_hash,),
+        ).fetchone()
+    return MemoryRecord.from_row(row) if row else None
 
 
 def search_semantic(
@@ -613,10 +642,10 @@ def _search_faiss(
     vec = np.array([vector], dtype="float32")
     k = min(top_k, idx.ntotal)
     try:
-        _, I = idx.search(vec, k)
+        _, idx_indices = idx.search(vec, k)
     except Exception:
         return []
-    positions = [int(p) for p in I[0] if 0 <= int(p) < len(ids)]
+    positions = [int(p) for p in idx_indices[0] if 0 <= int(p) < len(ids)]
     if not positions:
         return []
     memory_ids = [ids[p] for p in positions]

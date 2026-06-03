@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from textual.app import App
 
-from ..core import i18n
 from mmi.core.manager import SessionManager
 from ..core import paths as paths_module
 from .history import HistoryStore

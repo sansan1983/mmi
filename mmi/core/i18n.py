@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
-from typing import Literal
 
 # 支持的语言（白名单；新增语言必须同步更新 ARCHITECTURE.md §3.5.7）
 SUPPORTED_LANGS: tuple[str, ...] = ("zh-CN", "en-US")

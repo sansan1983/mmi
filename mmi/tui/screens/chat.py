@@ -24,7 +24,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical
 from textual.screen import Screen
-from textual.widgets import Footer, TextArea
+from textual.widgets import TextArea
 
 from .. import commands as commands_module
 from ...core import config as cfg_module
@@ -33,7 +33,6 @@ from ..widgets.chat_log import ChatLog
 from ..widgets.header_bar import HeaderBar
 from ..widgets.hint_bar import HintBar
 from ..widgets.slash_menu import SlashMenu
-from .list import SessionListScreen
 
 
 class _ChatTextArea(TextArea, inherit_bindings=False):

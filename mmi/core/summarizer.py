@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING
 
 from . import storage
 from .llm import LLMError, LLMProvider
-from .session import Session, SessionMeta, utcnow_iso
+from .session import SessionMeta, utcnow_iso
 
 if TYPE_CHECKING:
     pass
@@ -163,7 +163,6 @@ def update_summary(
         return False
 
     # 推入 history（在内存里做；最后 write_session 一次性落盘）
-    current_turns = body.count("**User:**")
     if meta.summary:
         meta.summary_history.append({
             "version": meta.summary_version,
@@ -225,18 +224,12 @@ def schedule_summary_update(
     """
     def _run() -> None:
         try:
-            body, turns_at = _read_body_for_memory(session_id)
             ok = update_summary(session_id, llm, language=language)
-            if ok and body:
-                # 摘要写成功后,自动入库到向量记忆(失败静默,不阻塞)
-                from . import memory as memory_module
-                try:
-                    memory_module.store_memory(
-                        session_id, body, turns_at=turns_at,
-                    )
-                except Exception:
-                    # 记忆入库失败不抛:摘要是关键路径,记忆是锦上添花
-                    pass
+            if ok:
+                # 摘要写成功后再起一个独立线程做入库
+                # 好处:update_summary 的 LLM 慢调用完成后立刻释放本线程,
+                # 入库(读 body + embedding)放独立线程不互相阻塞
+                _schedule_memory_store(session_id)
         except Exception:
             # 后台线程：任何异常都吞掉，不影响主流程
             pass
@@ -245,6 +238,39 @@ def schedule_summary_update(
         target=_run,
         daemon=True,
         name=f"summary-{session_id[:8]}",
+    )
+    t.start()
+    return t
+
+
+def _schedule_memory_store(session_id: str) -> threading.Thread:
+    """起一个独立线程跑 store_memory。
+
+    与 schedule_summary_update 解耦:
+      - summary 线程只管 update_summary,跑完即结束
+      - memory 线程读 body + embedding + 写 SQLite/FAISS
+      - 两个线程之间无锁竞争(读最新 body 在 memory 线程里做)
+    """
+    def _run() -> None:
+        try:
+            body, turns_at = _read_body_for_memory(session_id)
+            if not body:
+                return
+            from . import memory as memory_module
+            try:
+                memory_module.store_memory(
+                    session_id, body, turns_at=turns_at,
+                )
+            except Exception:
+                # 记忆入库失败不抛:摘要是关键路径,记忆是锦上添花
+                pass
+        except Exception:
+            pass
+
+    t = threading.Thread(
+        target=_run,
+        daemon=True,
+        name=f"memstore-{session_id[:8]}",
     )
     t.start()
     return t

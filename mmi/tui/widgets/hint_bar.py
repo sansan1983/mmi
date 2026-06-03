@@ -8,7 +8,6 @@ from __future__ import annotations
 from rich.text import Text
 from textual.widgets import Static
 
-from ...core.i18n import t
 
 __all__ = ["HintBar"]
 

@@ -19,7 +19,6 @@ from textual.containers import Vertical
 from textual.screen import Screen
 from textual.widgets import Footer, Header, Input, ListItem, ListView, Static
 
-from ...core import paths
 from ...core.i18n import t
 from ...core.session import SessionMeta
 
