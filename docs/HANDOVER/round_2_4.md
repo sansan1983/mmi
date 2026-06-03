@@ -2,6 +2,10 @@
 > 日期：2026-06-04
 > 状态：✅ 已完成
 > 主题：memory 写入收尾(独立线程 + 内容 hash 去重 + 清 ruff)
+> 覆盖 PLAN.md：**无**(bonus 收尾,不在 PLAN.md 任务清单里)
+>
+> 改动:summarizer 入库拆独立线程 + content_hash 去重 + 清 35 个 ruff error
+> 性质:对 Round 2.2/2.3 已交付的代码做收尾打磨,不属于新功能交付
 
 ---
 

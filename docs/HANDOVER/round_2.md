@@ -2,6 +2,7 @@
 > 日期：2026-06-03
 > 状态：✅ 已完成
 > 主题：二期 P0 收尾 — SessionMeta 时间字段 + cold→zombie 升级 + manager 写竞态修复
+> 覆盖 PLAN.md：**2.1**
 
 ---
 

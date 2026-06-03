@@ -2,6 +2,8 @@
 > 日期：2026-06-04
 > 状态：✅ 已完成
 > 主题：memory 接通 chat 自动入库 + LLM 摘要升级 + FTS5 双路召回
+> 覆盖 PLAN.md：**2.5**(补 Round 2.2 漏掉的 build_structured_summary LLM 版)
+> 顺手清:cli.py 重复 if + FTS5 schema + 12 个新测试
 
 ---
 
