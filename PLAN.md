@@ -1,7 +1,7 @@
 # MMI 分期计划（PLAN）
 
-> 版本：v0.1.0 | 2026-06-03  
-> 当前阶段：一期 MVP 完成，进入二期
+> 版本：v0.1.0 | 2026-06-04
+> 当前阶段：二期完成，进入三期
 
 ---
 
@@ -10,8 +10,8 @@
 | 阶段 | 目标 | 核心交付 | 状态 |
 |---|---|---|---|
 | 一期 | MVP — 有记忆的单Agent | 会话+上下文+摘要+热度+GC+CLI+TUI | ✅ 完成 |
-| 二期 | 向量记忆 | FAISS检索 + 结构化摘要 + 动态重排 | ⬜ 待开始 |
-| 三期 | 多Agent调度 | 意图路由 + 子Agent池 + 技能库 + 校验 | ⬜ 规划中 |
+| 二期 | 向量记忆 | FAISS检索 + 结构化摘要 + 动态重排 | ✅ 完成 |
+| 三期 | 多Agent调度 | 意图路由 + 子Agent池 + 技能库 + 校验 | ⬜ 待开始 |
 | 四期 | 进化 + 生态 | 技能统计 + 候选提议 + 评估框架 + 第三方 | ⬜ 规划中 |
 
 ---
@@ -48,31 +48,46 @@
 
 ---
 
-## 二期：向量记忆
+## 二期：向量记忆 ✅
 
 ### 目标
 将会话记忆从纯 TF 关键词检索升级为 FAISS 向量语义检索 + LLM 动态重排。
 
-### 任务清单
+### 已完成（2026-06-04 收尾）
 
-| # | 任务 | 说明 | 预估 |
+| # | 任务 | 状态 | 落点 |
 |---|---|---|---|
-| 2.1 | 修复 SessionMeta 遗留测试 | 10个失败 + cold_since_parsed 属性 | 0.5d |
-| 2.2 | 安装 FAISS 依赖 | faiss-cpu + sentence-transformers | 0.5d |
-| 2.3 | 实现 memory.store_memory() | 对话结束 → embedding → 存入 SQLite + FAISS | 2d |
-| 2.4 | 实现 memory.search_semantic() | 用户输入 → embedding → FAISS top-20 | 1d |
-| 2.5 | 实现 memory.build_structured_summary() | LLM 生成 {主题, 决策, 结论, 待办} | 1d |
-| 2.6 | 实现 memory.rerank() | LLM 动态重排 top-20 → top-3 | 1d |
-| 2.7 | 集成 context.py | build_context() 调用 memory.search_semantic() 注入上下文 | 1d |
-| 2.8 | 新增记忆表 | memories 表（SQLite）或 Faiss index 文件 | 0.5d |
-| 2.9 | CLI: mmi memory search | 检索历史记忆命令 | 0.5d |
-| 2.10 | 测试 | memory 模块单元测试 + 集成测试 | 1.5d |
+| 2.1 | 修复 SessionMeta 遗留测试 + cold_since_parsed | ✅ | `mmi/core/session.py`、`mmi/core/gc.py` |
+| 2.2 | 安装 FAISS + sentence-transformers 依赖 | ✅ | `pyproject.toml` `[memory]` extras |
+| 2.3 | 实现 memory.store_memory() | ✅ | `mmi/core/memory.py:store_memory` |
+| 2.4 | 实现 memory.search_semantic() | ✅ | `mmi/core/memory.py:search_semantic`(FAISS + FTS5 双路) |
+| 2.5 | 实现 memory.build_structured_summary() | ✅ | `mmi/core/memory.py` 规则版 + LLM 版双模 |
+| 2.6 | 实现 memory.rerank() | ✅ | `mmi/core/memory.py:rerank` |
+| 2.7 | 集成 context.py | ✅ | `mmi/core/context.py` LoaderConfig.memory + system 段 |
+| 2.8 | 新增记忆表 + FAISS index | ✅ | `~/.mmi/memory.db` + `~/.mmi/faiss.index` + `faiss_ids.json` |
+| 2.9 | CLI: mmi memory search/count/clear | ✅ | `mmi/cli.py` cmd_memory |
+| 2.10 | 测试 | ✅ | `tests/test_memory.py` 44 个 + 1 个 summarizer 集成 |
 
-### 验收标准
-- `mmi memory search "关键词"` 返回相关历史记忆
-- 新会话能自动注入相关历史记忆到上下文
-- 记忆检索延迟 < 500ms
-- 记忆模块测试通过
+### 验收对照
+
+- ✅ `mmi memory search "关键词"` 返回相关历史记忆
+- ✅ 新会话能自动注入相关历史记忆到上下文
+- ✅ 记忆检索延迟 < 500ms(FAISS IndexFlatL2 + 64 维)
+- ✅ 记忆模块测试通过(44 个单元 + 1 集成)
+- ✅ summarizer 后台线程成功后自动入库(content_hash 去重)
+- ✅ ruff 0 error(全 35 个清完)
+
+### 关键决策（已落地,不再重提）
+
+- 嵌入器可注入:默认 sentence-transformers,失败降级 HashEmbedder(测试用)
+- 存储:SQLite 存元数据 + FAISS 存向量 + JSON 存 id 映射(三件套)
+- 检索:FAISS top-k + FTS5 top-k → 按 memory_id 去重,FAISS 优先
+- rerank 容错:LLM 异常/未知 id → 退回原顺序补齐
+- summarizer 完成后自动入库,失败静默(独立 daemon 线程)
+- 同 body 重复入库 → content_hash 去重,不重算 embedding
+
+### 下一阶段
+[三期：多Agent调度](#三期多agent调度) — 3.1 orchestrator / 3.2 router / 3.3 registry 等
 
 ---
 
