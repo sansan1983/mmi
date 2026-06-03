@@ -1,9 +1,8 @@
-"""mmi.tui.screens.list —— 启动屏（会话列表）。
+"""mmi.tui.screens.list —— 会话列表视图。
 
-ARCHITECTURE Phase 5：
-  - on_mount 拉 mgr.list_sessions(limit=10)
-  - ListView 显示每条 [heat 12.0] [active] postgres-sharding
-  - 快捷键：Enter 进入 / n 新建 / s 搜索 / q 退出
+网格风格（mockup 设计），单 Static + 预格式化文本。
+
+快捷键：↑↓ 选择 · Enter 进入 · n 新建 · s 搜索 · q 退出
 """
 
 from __future__ import annotations
@@ -11,164 +10,174 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult
-from textual.binding import Binding
-from textual.containers import Vertical
-from textual.screen import Screen
-from textual.widgets import Footer, Header, ListItem, ListView, Static
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.widgets import Static
 
 from ...core.i18n import t
+from ...core import config as cfg_module
 from ...core.session import SessionMeta
 
 if TYPE_CHECKING:
     from ..app import CTrimApp
 
+__all__ = ["SessionListView"]
 
-__all__ = ["SessionListScreen"]
-
-
-class _SessionItem(ListItem):
-    """ListView 的一行（带 SessionMeta）。"""
-
-    def __init__(self, meta: SessionMeta, index: int):
-        super().__init__()
-        self._meta = meta
-        self._index = index
-        if meta.title:
-            label = t(
-                "tui.list.entry",
-                index=index,
-                title=meta.title,
-                heat=f"{meta.heat:.1f}",
-                state=meta.state,
-            )
-        else:
-            label = t(
-                "tui.list.entry.unnamed",
-                index=index,
-                heat=f"{meta.heat:.1f}",
-                state=meta.state,
-            )
-        self._label = label
-
-    def compose(self) -> ComposeResult:
-        yield Static(self._label)
-
-    @property
-    def meta(self) -> SessionMeta:
-        return self._meta
+# 列宽（字符格数，中文=2）
+_COL_IDX = 4
+_COL_HEAT = 8
+_COL_STATE = 8
+_COL_MODEL = 12
+_COL_TITLE = 36
 
 
-class SessionListScreen(Screen):
-    """TUI 启动屏：前 N 条会话。"""
+def _width(s: str) -> int:
+    """计算终端显示宽度（CJK 字符算2格）。"""
+    w = 0
+    for ch in s:
+        w += 2 if ord(ch) >= 0x2e80 else 1
+    return w
+
+def _lpad(s: str, w: int) -> str:
+    """左对齐（右侧补空格）。"""
+    return s + ' ' * max(0, w - _width(s))
+
+
+def _rpad(s: str, w: int) -> str:
+    """右对齐（左侧补空格）。"""
+    return ' ' * max(0, w - _width(s)) + s
+
+
+def _fmt_item(index: int, title: str, heat: float, state: str, model: str) -> str:
+    idx = f"{index:>{_COL_IDX-1}}"
+    ttl = title if _width(title) <= _COL_TITLE else title[:_COL_TITLE-3] + "..."
+    ht = f"{heat:<{_COL_HEAT}.1f}"
+    st = f"{state:<{_COL_STATE}}"
+    md = f"{model:<{_COL_MODEL}}"
+    return f"{idx}  {_lpad(ttl, _COL_TITLE)}  {ht}  {st}  {md}"
+
+
+def _fmt_header() -> str:
+    idx = f"{'#':>{_COL_IDX-1}}"
+    return f" {idx}  {_lpad('标题', _COL_TITLE)}  {_lpad('热度', _COL_HEAT)}  {_lpad('状态', _COL_STATE)}  {_lpad('模型', _COL_MODEL)}"
+
+# ---------------------------------------------------------------------------
+# 列表视图
+# ---------------------------------------------------------------------------
+
+class SessionListView(Vertical):
+    """会话列表视图。单 Static 行 + 预格式化文本。"""
 
     BINDINGS = [
-        Binding("n", "new_session", "新建"),
-        Binding("s", "search", "搜索"),
-        Binding("q", "quit_app", "退出"),
-        Binding("enter", "enter_session", "进入", show=False),
+        ("down", "cursor_down", "Down"),
+        ("up", "cursor_up", "Up"),
+        ("enter", "enter", "Enter"),
+        ("n", "new", "New"),
+        ("s", "search", "Search"),
+        ("q", "quit", "Quit"),
     ]
 
-    DEFAULT_CSS = """
-    SessionListScreen {
-        background: #1a1b26;
-    }
-    SessionListScreen ListView {
-        height: 1fr;
-        background: #1a1b26;
-    }
-    SessionListScreen ListView > ListItem {
-        padding: 0 1;
-    }
-    SessionListScreen ListView > ListItem.--highlight {
-        background: #2ac3de;
-        color: #1a1b26;
-    }
-    SessionListScreen .empty-pane {
-        align: center middle;
-        height: 1fr;
-        color: #565f89;
-    }
-    SessionListScreen .empty-pane .hint {
-        color: #7aa2f7;
-    }
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._items: list[_SessionItem] = []
-
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.can_focus = True
+        self._items: list[SessionMeta] = []
+        self._selected: int = 0
+        self._row_widgets: list[Static] = []
     def compose(self) -> ComposeResult:
-        yield Header(show_clock=False)
-        yield Vertical(id="list-container")
-        yield Footer()
+        # 顶栏（单 Static，避免 Horizontal 多 Static 不渲染的问题）
+        yield Static("", id="list-top")
+        # 表头
+        yield Static(_fmt_header(), id="list-header")
+        # 列表区
+        yield VerticalScroll(id="list-items")
+        # 空态
+        with Vertical(id="empty-state"):
+            yield Static("~ ~ ~", classes="empty-big")
+            yield Static(t("tui.list.empty"), classes="empty-text")
+            yield Static(t("tui.list.empty.hint"), classes="empty-hint")
+        # 底栏
+        yield Static("  ↑↓ 选择  ·  Enter 进入  ·  n 新建  ·  s 搜索  ·  q 退出  ", id="list-footer")
 
     def on_mount(self) -> None:
-        # Header 标题
+        self.focus()
+        self.refresh_sessions()
+
+    def refresh_sessions(self) -> None:
         try:
-            self.title = t("tui.list.title")
+            app: "CTrimApp" = self.app  # type: ignore[assignment]
+            self._items = app.mgr.list_sessions(limit=100)
+        except Exception:
+            self._items = []
+        self._rebuild()
+
+    def _rebuild(self) -> None:
+        container = self.query_one("#list-items", VerticalScroll)
+        container.remove_children()
+        self._row_widgets.clear()
+        empty_state = self.query_one("#empty-state", Vertical)
+        if not self._items:
+            container.display = False
+            empty_state.display = True
+            return
+        container.display = True
+        empty_state.display = False
+        for i, meta in enumerate(self._items):
+            title = meta.title or "(untitled)"
+            text = _fmt_item(i + 1, title, meta.heat, meta.state,
+                             cfg_module.get_default_model())
+            w = Static(text, classes="list-row")
+            self._row_widgets.append(w)
+            container.mount(w)
+        self._select(0)
+        # 更新顶栏计数
+        try:
+            top = self.query_one("#list-top", Static)
+            top.update(f"会话历史 · {len(self._items)} 个会话")
         except Exception:
             pass
-        self._load_sessions()
+            pass
 
-    def _load_sessions(self) -> None:
-        container = self.query_one("#list-container", Vertical)
-        # 移除旧子节点
-        for child in list(container.children):
-            child.remove()
-        app: "CTrimApp" = self.app  # type: ignore[assignment]
-        sessions = app.mgr.list_sessions(limit=10)
-        if not sessions:
-            from textual.containers import Vertical as V
-
-            empty = V(classes="empty-pane")
-            container.mount(empty)
-            empty.mount(Static(t("tui.list.empty")))
-            empty.mount(Static(t("tui.list.empty.hint"), classes="hint"))
+    def _select(self, idx: int) -> None:
+        if not self._row_widgets:
             return
-        items: list[ListItem] = []
-        for i, meta in enumerate(sessions, 1):
-            it = _SessionItem(meta, i)
-            self._items.append(it)
-            items.append(it)
-        lv = ListView(*items, id="sessions-list")
-        container.mount(lv)
-        lv.index = 0
+        idx = max(0, min(idx, len(self._row_widgets) - 1))
+        for w in self._row_widgets:
+            w.remove_class("-sel")
+        self._row_widgets[idx].add_class("-sel")
+        self._selected = idx
+        try:
+            container = self.query_one("#list-items", VerticalScroll)
+            container.scroll_to_widget(self._row_widgets[idx])
+        except Exception:
+            pass
 
-    # ----- Actions ------------------------------------------------------
+    def action_cursor_down(self) -> None:
+        if self._row_widgets:
+            self._select(self._selected + 1)
 
-    def action_new_session(self) -> None:
-        app: "CTrimApp" = self.app  # type: ignore[assignment]
-        sid = app.mgr.create()
-        from .chat import ChatScreen
+    def action_cursor_up(self) -> None:
+        if self._row_widgets:
+            self._select(self._selected - 1)
 
-        self.app.push_screen(ChatScreen(sid))
+    async def action_enter(self) -> None:
+        if not self._row_widgets:
+            return
+        meta = self._items[self._selected]
+        try:
+            app: "CTrimApp" = self.app  # type: ignore[assignment]
+            await app.show_chat(meta.session_id)
+        except Exception:
+            pass
+
+    async def action_new(self) -> None:
+        try:
+            app: "CTrimApp" = self.app  # type: ignore[assignment]
+            app.action_new_session()
+        except Exception:
+            pass
 
     def action_search(self) -> None:
         from .search import SearchScreen
-
         self.app.push_screen(SearchScreen())
 
-    def action_quit_app(self) -> None:
+    def action_quit(self) -> None:
         self.app.exit()
-
-    def action_enter_session(self) -> None:
-        # 拿到 ListView 高亮项
-        try:
-            lv = self.query_one("#sessions-list", ListView)
-        except Exception:
-            return
-        idx = lv.index
-        if idx is None or idx >= len(self._items):
-            return
-        meta = self._items[idx].meta
-        from .chat import ChatScreen
-
-        self.app.push_screen(ChatScreen(meta.session_id))
-
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
-        """ListView 内 Enter 触发：直接走 enter_session 动作。
-
-        ListView 把 Enter 路由成 Selected 事件而不是冒泡到 Screen binding，
-        所以必须在这里挂 handler。Screen-level Binding 仍保留供键盘直达用。
-        """
-        self.action_enter_session()

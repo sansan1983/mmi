@@ -1,507 +1,278 @@
-"""mmi.tui.screens.chat —— 主聊天屏。
-
-ARCHITECTURE Phase 5（最大块）：
-  布局：StatusBar + ChatContainer + TextArea + SlashMenu（overlay）
-  交互：
-    - Enter / Ctrl+Enter 发送
-    - Ctrl+C 双击退出（OMP 风格）
-    - ↑↓ 命令历史
-    - / 触发斜杠菜单
-  LLM 调用：worker 调度 + 流式降级到 chat() 整段
-"""
+"""mmi.tui.screens.chat —— 聊天视图。"""
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
-import io
-import shlex
-import subprocess
 import time
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from textual.app import ComposeResult
-from textual.binding import Binding
-from textual.containers import Vertical
-from textual.screen import Screen
-from textual.widgets import TextArea
+from textual.containers import Vertical, VerticalScroll
+from textual.widgets import Static, TextArea
 
-from .. import commands as commands_module
 from ...core import config as cfg_module
-from ...core.i18n import t
-from ..widgets.chat_log import ChatLog
-from ..widgets.header_bar import HeaderBar
-from ..widgets.hint_bar import HintBar
-from ..widgets.slash_menu import SlashMenu
-
-
-class _ChatTextArea(TextArea, inherit_bindings=False):
-    """TextArea for the chat input.
-
-    去掉 ctrl+d (delete_right) / ctrl+z (undo) 默认绑定 —— 这两个键在
-    ChatScreen.on_key 中被劫持做"清空输入"和"通知挂起不支持"。
-    """
-
-    BINDINGS = [
-        b
-        for b in TextArea.BINDINGS
-        if b.key and "ctrl+d" not in b.key and "ctrl+z" not in b.key
-    ]
+from ...core.llm import get_default_provider
+from ...core.storage import parse_turns
 
 if TYPE_CHECKING:
     from ..app import CTrimApp
 
+__all__ = ["ChatView"]
 
-__all__ = ["ChatScreen"]
-
-
-class History:
-    """命令历史（不依赖外部包）。"""
-
-    def __init__(self, max_size: int = 1000):
-        self._items: list[str] = []
-        self._max = max_size
-        self._cursor: int = -1  # -1 = 不在历史中
-
-    def push(self, text: str) -> None:
-        if not text:
-            return
-        if self._items and self._items[-1] == text:
-            return
-        self._items.append(text)
-        if len(self._items) > self._max:
-            self._items = self._items[-self._max :]
-        self._cursor = -1
-
-    def prev(self) -> str | None:
-        if not self._items:
-            return None
-        if self._cursor + 1 >= len(self._items):
-            return None
-        self._cursor += 1
-        return self._items[-(self._cursor + 1)]
-
-    def next(self) -> str | None:
-        if self._cursor <= 0:
-            self._cursor = -1
-            return ""
-        self._cursor -= 1
-        return self._items[-(self._cursor + 1)]
-
-    def reset(self) -> None:
-        self._cursor = -1
+_CMDS: dict[str, str] = {
+    "help": "显示帮助", "clear": "清屏", "list": "返回列表",
+    "new": "新建会话", "search": "搜索", "quit": "退出",
+    "model": "切换模型 例: /model gpt-4o",
+}
+_HELP = "\n".join(f"  /{k:<10} {v}" for k, v in _CMDS.items())
 
 
-class ChatScreen(Screen):
-    """主聊天屏。"""
+# ---------------------------------------------------------------------------
+# TextArea
+# ---------------------------------------------------------------------------
 
-    BINDINGS = [
-        Binding("ctrl+c", "exit_or_clear", "退出", show=False),
-        Binding("ctrl+enter", "handle_submit", "发送", show=False),
-    ]
-
-    DEFAULT_CSS = """
-    ChatScreen {
-        background: #1a1b26;
-    }
-    ChatScreen #input-bar {
-        height: auto;
-        padding: 0 1;
-    }
-    ChatScreen #chat-frame {
-        height: 1fr;
-    }
-    """
-
-    # Ctrl+C 双击时间窗（秒）
-    CTRL_C_WINDOW = 1.5
-
-    def __init__(self, session_id: str) -> None:
-        super().__init__()
-        self.session_id = session_id
-        self._history = History()
-        self._last_exit_at: float = 0.0
-        self._is_streaming: bool = False
-
-    # ----- compose ------------------------------------------------------
-
-    def compose(self) -> ComposeResult:
-        yield HeaderBar(id="header-bar")
-        with Vertical(id="chat-frame"):
-            yield ChatLog(id="chat-log")
-            yield SlashMenu(id="slash-menu")
-        yield HintBar(id="hint-bar")
-        with Vertical(id="input-bar"):
-            yield _ChatTextArea(id="input", name="input-editor")
+class SendTextArea(TextArea):
+    """Enter 发送，Ctrl+Enter 换行。自动维护 > 前缀。"""
 
     def on_mount(self) -> None:
+        self.text = "> "
+        self.cursor_location = (0, 2)
+
+    def on_key(self, event) -> None:
+        if event.key == "enter":
+            event.stop()
+            chat: ChatView = self.parent
+            if not isinstance(chat, ChatView):
+                return
+            text = self.text.strip()
+            if not text or text == ">":
+                return
+            self.text = "> "
+            self.cursor_location = (0, 2)
+            cmd = text[1:].strip() if text.startswith(">") else text
+            if cmd.startswith("/"):
+                chat.handle_command(cmd)
+            elif cmd:
+                chat.send_message(cmd)
+
+
+# ---------------------------------------------------------------------------
+# Turn
+# ---------------------------------------------------------------------------
+
+class Turn(Vertical):
+    def __init__(self, role: str, content: str = "", meta: str = "",
+                 collapsed: bool = False) -> None:
+        super().__init__()
+        self._role = role
+        self._content = content
+        self._meta = meta
+        self._collapsed = collapsed
+
+    def compose(self) -> ComposeResult:
+        icon = "▶" if self._collapsed else "▼"
+        rn = "You" if self._role == "user" else "MMI"
+        rc = "role-user" if self._role == "user" else "role-asst"
+        yield Static(f" {icon}  {rn} {self._meta}", classes=f"turn-header {rc}")
+        self._body = Vertical(classes=f"turn-body {'-hidden' if self._collapsed else ''}")
+        self._cw = Static(self._content, classes="msg-content")
+        with self._body:
+            yield self._cw
+
+    def append_content(self, chunk: str) -> None:
+        self._content += chunk
+        self._cw.update(self._content)
+
+    def on_click(self) -> None:
         try:
-            self.title = t("tui.chat.title")
-        except Exception:
-            pass
-        # 状态栏初值
-        self._refresh_status_bar()
-        # 输入框拿焦点
-        try:
-            self.query_one("#input", TextArea).focus()
-        except Exception:
-            pass
-        # 斜杠菜单默认隐藏
-        try:
-            self.query_one("#slash-menu", SlashMenu).hide()
+            h = not self._body.has_class("-hidden")
+            self._body.set_class(h, "-hidden")
+            sh = self.query_one(".turn-header", Static)
+            rn = "You" if self._role == "user" else "MMI"
+            self._collapsed = h
+            sh.update(f" {'▶' if h else '▼'}  {rn} {self._meta}")
         except Exception:
             pass
 
-    # ----- 状态栏 -------------------------------------------------------
 
-    def _refresh_status_bar(self) -> None:
-        app: "CTrimApp" = self.app  # type: ignore[assignment]
+# ---------------------------------------------------------------------------
+# ChatView
+# ---------------------------------------------------------------------------
+
+class ChatView(Vertical):
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._session_id: str | None = None
+        self._session_title: str = ""
+
+    def compose(self) -> ComposeResult:
+        yield Static(" M   gpt-4o  heat --  active      ~-- ctx", id="chat-topbar")
+        yield VerticalScroll(id="msg-area")
+        yield SendTextArea("", id="input-editor")
+        yield Static("  Enter 发送  ·  / 命令  ·  Esc 返回         ● 就绪",
+                     id="chat-footer")
+
+    def load_session(self, session_id: str) -> None:
+        self._session_id = session_id
         try:
-            hb = self.query_one("#header-bar", HeaderBar)
-        except Exception:
-            return
-        # 拿最新 meta
-        try:
-            metas = app.mgr.list_sessions(limit=10_000)
-            meta = next((m for m in metas if m.session_id == self.session_id), None)
+            app: "CTrimApp" = self.app
+            meta = next((m for m in app.mgr.list_sessions(limit=1000)
+                         if m.session_id == session_id), None)
         except Exception:
             meta = None
-        if meta is not None:
-            hb.update_session(
-                model=cfg_module.get_default_model(),
-                heat=f"{meta.heat:.1f}",
-                state=meta.state,
-            )
+        if meta:
+            self._session_title = meta.title or session_id[:8]
+            self._update_topbar(meta)
         else:
-            hb.update_session(
-                model=cfg_module.get_default_model(),
-                heat="--",
-                state="active",
-            )
+            self._session_title = session_id[:8]
+        self._update_footer()
+        self._load_messages()
+        self.call_after_refresh(lambda: self.query_one("#input-editor").focus())
 
-    # ----- TextArea 事件 ------------------------------------------------
-
-    def on_text_area_changed(self, event: TextArea.Changed) -> None:
-        """监听 / 触发斜杠菜单 + 切换 bash / python 边框色。"""
+    def _update_topbar(self, meta) -> None:
         try:
-            val = event.text_area.text
-        except Exception:
-            val = ""
-        # bash / python 前缀 → 切边框色
-        try:
-            ed = self.query_one("#input", TextArea)
-            ed.set_class(val.startswith("!"), "-bash")
-            ed.set_class(val.startswith("$"), "-python")
+            tb = self.query_one("#chat-topbar", Static)
+            tb.update(f" M   {cfg_module.get_default_model()}  heat {meta.heat:.1f}  {meta.state}      ~-- ctx")
         except Exception:
             pass
-        # 斜杠菜单
-        if val.startswith("/") and " " not in val:
-            try:
-                sm = self.query_one("#slash-menu", SlashMenu)
-                sm.toggle(val)
-            except Exception:
-                pass
-        else:
-            try:
-                self.query_one("#slash-menu", SlashMenu).hide()
-            except Exception:
-                pass
 
-    def action_handle_submit(self) -> None:
-        """Ctrl+Enter 触发：根据前缀派发到 bash / python / slash / chat。"""
-        if self._is_streaming:
-            return
+    def _update_footer(self) -> None:
         try:
-            ed = self.query_one("#input", TextArea)
-            text = ed.text.strip()
-        except Exception:
-            return
-        if not text:
-            return
-        # bash 前缀
-        if text.startswith("!"):
-            cmd = text[1:].strip()
-            if cmd:
-                self._dispatch_command("bash", text, cmd)
-            return
-        # python 前缀
-        if text.startswith("$"):
-            code = text[1:].strip()
-            if code:
-                self._dispatch_command("python", text, code)
-            return
-        # 斜杠命令？
-        if text.startswith("/"):
-            result = commands_module.dispatch(self, text)
-            self._apply_command_result(result)
-            # 清空输入
-            try:
-                ed.text = ""
-            except Exception:
-                pass
-            try:
-                self.query_one("#slash-menu", SlashMenu).hide()
-            except Exception:
-                pass
-            return
-        # 普通消息
-        self._do_chat_submit(text)
-
-    def _do_chat_submit(self, text: str) -> None:
-        """派发普通聊天消息（清空输入 + 写日志 + 起 worker）。"""
-        self._history.push(text)
-        try:
-            ed = self.query_one("#input", TextArea)
-            ed.text = ""
+            f = self.query_one("#chat-footer", Static)
+            f.update(f"  Enter 发送  ·  / 命令  ·  Esc 返回        {self._session_title}  ● 就绪")
         except Exception:
             pass
+
+    def _load_messages(self) -> None:
+        ma = self.query_one("#msg-area", VerticalScroll)
+        ma.remove_children()
+        if not self._session_id:
+            return
         try:
-            self.query_one("#chat-log", ChatLog).append_user(text)
-        except Exception:
-            pass
-        # 调度 worker
-        self.run_worker(
-            self._do_chat(text),
-            exclusive=True,
-            thread=False,
-            name="chat-stream",
-        )
-
-    async def _do_chat(self, text: str) -> None:
-        """worker 主体：调 LLM 流式（不可用则降级）。"""
-        self._is_streaming = True
-        chat_log = self.query_one("#chat-log", ChatLog)
-        header_bar = self.query_one("#header-bar", HeaderBar)
-        header_bar.set_busy(True)
-        try:
-            app: "CTrimApp" = self.app  # type: ignore[assignment]
-            messages = self._build_messages(text)
-            # 先调一次 sync chat 拿 reply（流式仅影响 UI 渲染；core 仍走 chat 持久化）
-            # Phase 5 简化：TUI 走 stream 路径，回复用 chat 持久化（保持 body 不变）
-            try:
-                # 走真流式
-                chat_log.append_assistant_start()
-                ait = app.mgr.llm.stream_chat(messages, max_tokens=512, temperature=0.7)
-                buf: list[str] = []
-                async for chunk in ait:
-                    buf.append(chunk)
-                    chat_log.append_assistant_chunk(chunk)
-                chat_log.append_assistant_done("".join(buf))
-                # 持久化（用 chat() 走完整流程：turn + heat + 摘要）
-                await asyncio.to_thread(app.mgr.chat, self.session_id, text)
-            except NotImplementedError:
-                # 降级：sync chat
-                reply = await asyncio.to_thread(app.mgr.chat, self.session_id, text)
-                chat_log.append_assistant_done(reply)
-            except Exception as e:
-                self.notify(t("tui.chat.error.llm", error=str(e)), severity="error")
-                return
-            # 刷状态栏
-            self._refresh_status_bar()
-        finally:
-            header_bar.set_busy(False)
-            self._is_streaming = False
-
-    def _build_messages(self, text: str) -> list[dict]:
-        """构造 OpenAI 格式 messages。
-
-        Phase 5 简化：只发 system 引导 + 当前 user。
-        完整 loader 走 manager.chat 的内部流程；这里只给 stream 喂一个最小上下文。
-        """
-        from ...core.i18n import get_lang
-
-        sys_text = (
-            "你是 C-Trim 的助手。可以使用以下折叠协议（可选）：\n"
-            "> [thinking] ...思考过程...\n"
-            "> [tool_call name=xxx] ...参数/结果...\n"
-            "TUI 会把上述两行起头的内容渲染为可折叠块。"
-        )
-        if get_lang() == "zh-CN":
-            sys_text = (
-                "你是 C-Trim 的助手。可以使用以下折叠协议（可选）：\n"
-                "> [thinking] ...思考过程...\n"
-                "> [tool_call name=xxx] ...参数/结果...\n"
-                "TUI 会把上述两行起头的内容渲染为可折叠块。"
-            )
-        return [
-            {"role": "system", "content": sys_text},
-            {"role": "user", "content": text},
-        ]
-
-    # ----- 斜杠命令结果处理 --------------------------------------------
-
-    def _apply_command_result(self, result: commands_module.SlashCommandResult) -> None:
-        if result.action == "stay":
-            if result.msg:
-                self.notify(result.msg, severity="warning")
-        elif result.action == "pop":
-            self.app.pop_screen()
-        elif result.action == "pop_after_archive":
-            self.notify("archived", timeout=2)
-            self.app.pop_screen()
-        elif result.action == "push_search":
-            from .search import SearchScreen
-
-            self.app.push_screen(SearchScreen())
-        elif result.action == "refresh_model":
-            self._refresh_status_bar()
-            self.notify(f"model → {cfg_module.get_default_model()}", timeout=2)
-        elif result.action == "exit":
-            self.app.exit()
-
-    # ----- Ctrl+C / Ctrl+D 双击退出 / Ctrl+Z 占位 -----------------------
-
-    def action_exit_or_clear(self) -> None:
-        """Ctrl+C 或 Ctrl+D：第一次清空输入，1.5s 内第二次退出。"""
-        try:
-            ed = self.query_one("#input", TextArea)
+            app: "CTrimApp" = self.app
+            session = app.mgr.get(self._session_id)
         except Exception:
             return
-        if ed.text.strip():
-            # 有内容：清空
-            ed.text = ""
-            return
-        now = time.monotonic()
-        if now - self._last_exit_at < self.CTRL_C_WINDOW:
-            self.app.exit()
-            return
-        self._last_exit_at = now
-        self.notify(t("tui.chat.ctrl_c_hint"), timeout=2)
+        turns = parse_turns(getattr(session, "body", ""))
+        for i, t in enumerate(turns):
+            role = t["role"]
+            content = t["content"]
+            ts = time.strftime("%H:%M:%S")
+            collapsed = role == "assistant" and i == len(turns) - 1 and len(content) > 200
+            ma.mount(Turn(role, content, meta=f"~?? tok  {ts}", collapsed=collapsed))
+        ma.scroll_end()
 
-    def action_ctrl_z_unsupported(self) -> None:
-        """Ctrl+Z 在 TUI 中不支持 OS 级挂起；只是通知用户。"""
-        self.notify(t("tui.chat.ctrl_z_unsupported"), timeout=3)
+    def send_message(self, text: str) -> None:
+        self._add_turn("user", text)
+        self.set_busy(True)
+        self.call_later(self._stream_reply, text)
 
-    # ----- ↑↓ 历史（TextArea widget 上绑）-------------------------------
-
-    def on_key(self, event) -> None:  # type: ignore[no-untyped-def]
-        """捕获 TextArea 拿焦点时的 ↑↓；拦截 Ctrl+D / Ctrl+Z。"""
-        # 全局快捷键（无视焦点，但要 prevent_default 阻止 TextArea 内置绑定）
-        if event.key == "ctrl+d":
-            self.action_exit_or_clear()
-            event.prevent_default()
-            return
-        if event.key == "ctrl+z":
-            self.action_ctrl_z_unsupported()
-            event.prevent_default()
-            return
-        # ↑↓ 历史（只在 TextArea 拿焦点时拦截）
+    async def _stream_reply(self, text: str) -> None:
+        ts = time.strftime("%H:%M:%S")
+        turn = Turn("assistant", meta=f"~? tok  {ts}")
         try:
-            focused = self.focused
-            ed = self.query_one("#input", TextArea)
+            self.query_one("#msg-area", VerticalScroll).mount(turn)
         except Exception:
+            self.set_busy(False)
             return
-        if focused is not ed:
-            return
-        if event.key == "up":
-            prev = self._history.prev()
-            if prev is not None:
-                ed.text = prev
-                # TextArea 游标移到末尾
-                line_count = prev.count("\n") + 1
-                ed.cursor_location = (line_count - 1, len(prev.rsplit("\n", 1)[-1]))
-            event.prevent_default()
-        elif event.key == "down":
-            nxt = self._history.next()
-            if nxt is not None:
-                ed.text = nxt
-                line_count = nxt.count("\n") + 1
-                ed.cursor_location = (line_count - 1, len(nxt.rsplit("\n", 1)[-1]))
-            event.prevent_default()
-
-    # ----- bash / python 前缀命令（绕过 LLM）----------------------------
-
-    def _dispatch_command(self, kind: str, raw_text: str, payload: str) -> None:
-        """派发 bash / python：清空输入 + 写聊天日志 + 起 worker。"""
-        if self._is_streaming:
-            return
-        self._history.push(raw_text)
         try:
-            ed = self.query_one("#input", TextArea)
-            ed.text = ""
-            ed.remove_class("-bash")
-            ed.remove_class("-python")
-        except Exception:
-            pass
-        try:
-            chat_log = self.query_one("#chat-log", ChatLog)
-            prompt = "!" if kind == "bash" else "$"
-            chat_log.append_command_input(prompt, payload)
-        except Exception:
-            pass
-        self.run_worker(
-            self._do_command(kind, payload),
-            exclusive=True,
-            thread=False,
-            name=f"command-{kind}",
-        )
-
-    async def _do_command(self, kind: str, payload: str) -> None:
-        """worker 主体：调 _run_bash / _run_python，append 到聊天日志。"""
-        self._is_streaming = True
-        try:
-            if kind == "bash":
-                output = await asyncio.to_thread(_run_bash, payload)
-            else:
-                output = await asyncio.to_thread(_run_python, payload)
-            chat_log = self.query_one("#chat-log", ChatLog)
-            chat_log.append_command_output(output)
+            async for chunk in get_default_provider().stream_chat([{"role": "user", "content": text}]):
+                turn.append_content(chunk)
+                self.query_one("#msg-area", VerticalScroll).scroll_end(animate=False)
+                await asyncio.sleep(0)
         except Exception as e:
+            turn.append_content(f"\n[error: {e}]")
+        turn._meta = f"~{len(turn._content) // 4} tok  {ts}"
+        try:
+            self.query_one(".turn-header", Static).update(f" ▼  MMI {turn._meta}")
+        except Exception:
+            pass
+        self.set_busy(False)
+        self._save()
+
+    def handle_command(self, text: str) -> None:
+        parts = text[1:].strip().split(maxsplit=1)
+        cmd = parts[0].lower() if parts else ""
+        arg = parts[1] if len(parts) > 1 else ""
+        if cmd == "help":
+            self._add_turn("assistant", f"可用命令:\n{_HELP}", collapsed=False)
+        elif cmd == "clear":
+            self.clear_messages()
+        elif cmd in ("list", "new"):
             try:
-                self.notify(f"command failed: {e}", severity="error")
+                app: "CTrimApp" = self.app
+                if cmd == "new":
+                    app.action_new_session()
+                else:
+                    app.call_from_thread(app.show_list)
             except Exception:
                 pass
-        finally:
-            self._is_streaming = False
+        elif cmd == "search":
+            from .search import SearchScreen
+            self.app.push_screen(SearchScreen())
+        elif cmd == "quit":
+            self.app.exit()
+        elif cmd == "model" and arg:
+            try:
+                cfg_module.write_key("model", arg)
+                self._add_turn("system", f"模型已切换至 {arg}")
+            except Exception:
+                self._add_turn("system", "切换模型失败")
+        else:
+            self._add_turn("assistant", f"未知命令: /{cmd}\n输入 /help 查看可用命令")
 
+    def _add_turn(self, role: str, content: str, collapsed: bool | None = None) -> None:
+        ts = time.strftime("%H:%M:%S")
+        meta = f"{'~' + str(len(content) // 4) if role == 'assistant' else '~?'} tok  {ts}"
+        if collapsed is None:
+            collapsed = role == "assistant" and len(content) > 200
+        try:
+            ma = self.query_one("#msg-area", VerticalScroll)
+            ma.mount(Turn(role, content, meta=meta, collapsed=collapsed))
+            ma.scroll_end()
+        except Exception:
+            pass
 
-# ---------------------------------------------------------------------------
-# bash / python 执行（模块级，便于单测）
-# ---------------------------------------------------------------------------
+    def _save(self) -> None:
+        """将 UI turns 写回 session.body（Markdown 格式）。"""
+        if not self._session_id:
+            return
+        turns: list[dict] = []
+        try:
+            ma = self.query_one("#msg-area", VerticalScroll)
+            for c in ma.children:
+                if isinstance(c, Turn):
+                    turns.append({"role": c._role, "content": c._content})
+        except Exception:
+            return
+        if not turns:
+            return
+        date = datetime.now().strftime("%Y-%m-%d")
+        parts = [f"## {date}"]
+        for t in turns:
+            label = "User" if t["role"] == "user" else "Assistant"
+            parts.append(f"**{label}:** {t['content']}")
+        body = "\n\n".join(parts) + "\n"
+        try:
+            app: "CTrimApp" = self.app
+            s = app.mgr.get(self._session_id)
+            if s:
+                s.body = body
+                app.mgr.storage.write_session(s)
+        except Exception:
+            pass
 
+    def set_busy(self, busy: bool) -> None:
+        try:
+            f = self.query_one("#chat-footer", Static)
+            t = f.renderable or ""
+            f.update(t.replace("● 就绪", "● 工作中") if busy else t.replace("● 工作中", "● 就绪"))
+        except Exception:
+            pass
 
-def _run_bash(cmd: str) -> str:
-    """通过 subprocess 跑 bash 命令，返回 stdout+stderr 文本。
-
-    安全约束：shell=False + shlex.split + 10s timeout。
-    """
-    if not cmd:
-        return ""
-    try:
-        args = shlex.split(cmd)
-        if not args:
-            return ""
-        result = subprocess.run(
-            args,
-            capture_output=True,
-            text=True,
-            timeout=10.0,
-        )
-        out = result.stdout or ""
-        if result.stderr:
-            out += result.stderr
-        if result.returncode != 0:
-            out = f"[exit {result.returncode}]\n{out}"
-        return out.rstrip("\n") or "(no output)"
-    except FileNotFoundError as e:
-        return f"[bash] command not found: {e}"
-    except subprocess.TimeoutExpired:
-        return "[bash] timeout (>10s)"
-    except Exception as e:
-        return f"[bash] error: {e}"
-
-
-def _run_python(code: str) -> str:
-    """通过 exec 跑 python 代码，返回捕获的 stdout。
-
-    无沙箱（本地可信使用）。错误信息追加到输出末尾。
-    """
-    if not code:
-        return ""
-    buf = io.StringIO()
-    try:
-        with contextlib.redirect_stdout(buf):
-            exec(code, {"__builtins__": __builtins__})  # noqa: S102
-    except Exception as e:
-        buf.write(f"\n[error] {type(e).__name__}: {e}")
-    return buf.getvalue().rstrip("\n") or "(no output)"
+    def clear_messages(self) -> None:
+        try:
+            self.query_one("#msg-area", VerticalScroll).remove_children()
+        except Exception:
+            pass
