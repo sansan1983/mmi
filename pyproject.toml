@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mmi"
+version = "0.1.0"
+description = "MMI — Multimodal Intelligence 多模态智能体系统"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "sansan1983" }]
+
+dependencies = [
+    "typer>=0.12",
+    "portalocker>=2.8",
+    "pyyaml>=6.0",
+    "python-ulid>=3.0",
+    "openai>=1.0",
+]
+
+[project.optional-dependencies]
+tui = ["textual>=0.50"]
+fuzzy = ["rapidfuzz>=3.0"]
+test = ["pytest>=8.0"]
+
+[project.scripts]
+mmi = "mmi.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["mmi*"]
