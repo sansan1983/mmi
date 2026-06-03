@@ -176,10 +176,21 @@ def update_summary(
     meta.summary = new_summary
     meta.summary_version += 1
 
-    # 写回（不重写 body）—— write_session 内部加锁
+    # 写回（不重写 body）—— 在文件锁内重读 + 合并 + 写，
+    # 避免与 manager._recompute_heat 等并发写入产生 lost-update。
     try:
-        storage.write_session(Session(meta=meta, body=body))
-    except (storage.SessionNotFound, OSError):
+        with storage._exclusive_lock(session_id):
+            s2 = storage.read_session(session_id)
+            s2.meta.summary = meta.summary
+            s2.meta.summary_version = meta.summary_version
+            s2.meta.summary_history = meta.summary_history
+            s2.meta.updated_at = utcnow_iso()
+            # 直接 _atomic_write：write_session 会再 lock 死锁
+            storage._atomic_write(
+                storage.session_path(session_id),
+                storage._dump_frontmatter(s2.meta) + s2.body,
+            )
+    except (storage.SessionNotFound, storage.SessionCorrupt, OSError):
         return False
 
     return True

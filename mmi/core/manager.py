@@ -290,12 +290,16 @@ class SessionManager:
         """读最新 frontmatter → 算 heat + state → 写回。
 
         行为：
+          - 在文件锁内重读 + 算 + 写，避免与并发 write_session（如后台
+            update_summary）产生 lost-update 竞争
           - 只有 heat / state / cold_since 任一变化时才写盘
           - 文件丢失/损坏时静默跳过（不影响 chat 主流程）
           - 由 chat() 末尾调用，也可独立调用（如 list 时惰性补算 —— 暂不做）
         """
         try:
-            s = storage.read_session(session_id)
+            with storage._exclusive_lock(session_id):
+                # 锁内重读：防止和 update_summary 等并发写入冲突
+                s = storage.read_session(session_id)
         except (storage.SessionNotFound, storage.SessionCorrupt):
             return
         old_heat = s.meta.heat
@@ -308,6 +312,18 @@ class SessionManager:
             or s.meta.cold_since != old_cold_since
         ):
             try:
-                storage.write_session(s)
+                with storage._exclusive_lock(session_id):
+                    # 再读一次：若 update_summary 在我们算 heat 期间写了
+                    # summary，把 in-memory 的 heat/state 合并到最新视图里
+                    s2 = storage.read_session(session_id)
+                    s2.meta.heat = s.meta.heat
+                    s2.meta.state = s.meta.state
+                    s2.meta.cold_since = s.meta.cold_since
+                    s2.meta.updated_at = s.meta.updated_at
+                    # 直接 _atomic_write：write_session 会再 lock 死锁
+                    storage._atomic_write(
+                        storage.session_path(session_id),
+                        storage._dump_frontmatter(s2.meta) + s2.body,
+                    )
             except (storage.SessionNotFound, storage.SessionCorrupt, OSError):
                 pass

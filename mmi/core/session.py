@@ -105,7 +105,7 @@ def utcnow_iso() -> str:
 
 
 def _parse_datetime(value: Any) -> datetime | None:
-    """把 YAML 加载出来的任意值转成带 tz 的 aware datetime（UTC）。
+    """把任意值转成带 tz 的 aware datetime（UTC）。
 
     允许的类型：
       - str   → 按 ISO-8601 解析（'2026-06-02T19:48:54.177Z'）
@@ -125,6 +125,26 @@ def _parse_datetime(value: Any) -> datetime | None:
         dt = datetime.fromisoformat(s)
         return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
     raise ValueError(f"_parse_datetime 不支持类型 {type(value).__name__}")
+
+
+def _coerce_iso_str(value: Any) -> str:
+    """把任意时间值规整成 ISO-8601 字符串（空值归一为 ""）。
+
+    from_dict 用：保证字段类型始终是 str，与 dataclass 声明一致。
+      - str   → 去掉首尾空白
+      - datetime → 转 UTC aware 再格式化
+      - None  → ""
+      - 其他  → ValueError
+    """
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.strftime("%Y-%m-%dT%H:%M:%S.") + f"{value.microsecond // 1000:03d}Z"
+    raise ValueError(f"_coerce_iso_str 不支持类型 {type(value).__name__}")
 
 
 # ---------------------------------------------------------------------------
@@ -190,23 +210,49 @@ class SessionMeta:
           - 多余字段忽略
           - 类型不匹配抛 ValueError（不静默吞掉）
 
-        注意：summary_history 与 keywords 是 list 字段；YAML 加载出来
-        可能是 list 或 None，None 会被 dataclass 字段默认值替换。
-
-        Bugfix（Round 0.2）：时间字段从 YAML 加载后是 ISO 字符串，
-        内部需要 datetime 对象才能参与 heat 计算。统一在此解析。
+        时间字段统一保持为 ISO-8601 字符串（与字段类型 `str` 一致），
+        需要 datetime 时用对应的 `*_parsed` 属性（懒解析）。
         """
         if not isinstance(d, dict):
             raise ValueError(f"SessionMeta.from_dict 需要 dict，得到 {type(d).__name__}")
         known = {f.name for f in fields(cls)}
         clean = {k: v for k, v in d.items() if k in known}
 
-        # 时间字段：YAML 存 ISO 字符串，内部用 datetime 对象
-        for field_name in ("created_at", "updated_at", "last_access", "trashed_at", "cold_since"):
+        # 时间字段：YAML 加载后可能是 str、datetime 或 None。
+        # 统一规范成 str（与字段类型一致；空值归一为 ""）。
+        for field_name in (
+            "created_at", "updated_at", "last_access", "trashed_at", "cold_since",
+        ):
             if field_name in clean:
-                clean[field_name] = _parse_datetime(clean[field_name])
+                clean[field_name] = _coerce_iso_str(clean[field_name])
 
         return cls(**clean)
+
+    # ----- 懒解析的 datetime 属性 ------------------------------------------
+    #
+    # heat.py / gc.py 等需要把 ISO 字符串转成 datetime 做差值计算，
+    # 单独提供 `*_parsed` 属性避免在 from_dict 里集中转换。
+    # 空字符串/缺失字段 → None（不抛错，调用方应自行处理）。
+
+    @property
+    def created_at_parsed(self) -> datetime | None:
+        return _parse_datetime(self.created_at)
+
+    @property
+    def updated_at_parsed(self) -> datetime | None:
+        return _parse_datetime(self.updated_at)
+
+    @property
+    def last_access_parsed(self) -> datetime | None:
+        return _parse_datetime(self.last_access)
+
+    @property
+    def trashed_at_parsed(self) -> datetime | None:
+        return _parse_datetime(self.trashed_at)
+
+    @property
+    def cold_since_parsed(self) -> datetime | None:
+        return _parse_datetime(self.cold_since)
 
     # ----- 工厂方法 -------------------------------------------------------
 

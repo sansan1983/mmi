@@ -153,13 +153,13 @@ def gc_trash(
         try:
             s = storage.read_trash_session(sid)
             trashed_at_str = s.meta.trashed_at
-            trashed_at = _parse_iso_utc(trashed_at_str)
+            trashed_at = s.meta.trashed_at_parsed
             if trashed_at is None:
                 # 兜底：用文件 mtime
                 p = storage.trash_path(sid)
                 mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
                 trashed_at = mtime
-                trashed_at_str = trashed_at.isoformat().replace("+00:00", "Z")
+                trashed_at_str = mtime.strftime("%Y-%m-%dT%H:%M:%S.") + f"{mtime.microsecond // 1000:03d}Z"
 
             age = now - trashed_at
             age_days = age.total_seconds() / 86400
@@ -228,6 +228,10 @@ def gc_zombies(
         try:
             s = storage.read_session(sid)
             state_str = str(s.meta.state)
+            # 升级：cold 持续 > zombie_days 时先升为 zombie，再删
+            if state_str == SessionState.COLD:
+                heat_module.apply_heat_and_state(s.meta, now=now, config=config)
+                state_str = str(s.meta.state)
             if state_str == SessionState.ZOMBIE:
                 # zombie 直接删，不进 trash
                 entry = GcEntry(
