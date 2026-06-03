@@ -1,0 +1,263 @@
+"""mmi.core.search —— 关键词检索。
+
+ARCHITECTURE.md §6.2 / §9 Phase 3：
+  - 基础字符串匹配 + 简单 TF（Phase 3 范围）
+  - fuzzywuzzy / rapidfuzz 模糊匹配（Phase 5 升级）
+  - embedding 向量检索（Phase 12 升级，扩展模块）
+
+设计目标：给 loader 找"老但相关"的 turn，让 LLM 看到的不只是最近 N 轮。
+不做召回率优化 —— 简单、确定性、零依赖优先。
+"""
+
+from __future__ import annotations
+
+import re
+from collections import Counter
+from typing import Callable, Iterable, TypeVar
+
+__all__ = [
+    "search_top_k",
+    "tokenize",
+    "score_turns",
+    "expand_to_rounds",
+    "fuzzy_match_scores",
+]
+
+T = TypeVar("T")
+
+
+# ---------------------------------------------------------------------------
+# 分词
+# ---------------------------------------------------------------------------
+
+
+_EN_STOPWORDS = frozenset({
+    "a", "an", "the", "is", "am", "are", "was", "were", "be", "been", "being",
+    "i", "you", "he", "she", "it", "we", "they", "me", "him", "her", "us", "them",
+    "my", "your", "his", "its", "our", "their",
+    "and", "or", "but", "if", "so", "as", "of", "in", "on", "at", "to", "for",
+    "with", "by", "from", "up", "down", "out", "about", "into", "over", "after",
+    "this", "that", "these", "those",
+    "do", "does", "did", "have", "has", "had", "will", "would", "should", "could",
+    "can", "may", "might", "must", "shall",
+    "not", "no", "yes", "ok", "okay", "hi", "hello", "hey", "thanks", "thank",
+    "what", "when", "where", "why", "how", "who", "which",
+    "just", "only", "also", "very", "really", "much", "some", "any", "all",
+    "there", "here", "now", "then", "than",
+})
+
+_ZH_STOPWORDS = frozenset({
+    "我", "你", "他", "她", "它", "们", "的", "了", "是", "在", "有", "和", "与",
+    "或", "但", "就", "也", "都", "还", "已", "将", "要", "能", "会", "可", "让",
+    "把", "被", "对", "向", "从", "到", "为", "以", "及", "而", "因", "所以",
+    "啊", "吗", "呢", "吧", "哦", "嗯", "呀", "哈", "哎", "啦", "嘛",
+    "这", "那", "哪", "谁", "什", "么", "怎", "样", "为", "何",
+    "请", "谢", "好", "不", "没", "无", "非",
+    "什么", "怎么", "怎样", "为什么", "如何",
+    "你好", "hello", "hi",
+})
+
+
+def tokenize(text: str, *, language: str = "zh-CN") -> list[str]:
+    """简易分词。
+
+    英文：转小写 + 去标点 + 按空格切 + 停用词过滤 + 去重（保序）
+    中文：去标点 + 2-gram + 停用词过滤 + 去重（保序）
+    """
+    if not text:
+        return []
+    text = text.lower()
+    if language.startswith("zh"):
+        return _tokenize_zh(text)
+    return _tokenize_en(text)
+
+
+def _tokenize_en(text: str) -> list[str]:
+    text = re.sub(r"[^\w\s]", " ", text)
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in text.split():
+        if len(t) < 2:
+            continue
+        if t in _EN_STOPWORDS:
+            continue
+        if t in seen:
+            continue
+        seen.add(t)
+        out.append(t)
+    return out
+
+
+def _tokenize_zh(text: str) -> list[str]:
+    text = re.sub(r"[^\w\s一-鿿]", " ", text)
+    chars = [c for c in text if "一" <= c <= "鿿"]
+    if len(chars) < 2:
+        return chars
+    grams = [chars[i] + chars[i + 1] for i in range(len(chars) - 1)]
+    seen: set[str] = set()
+    out: list[str] = []
+    for g in grams:
+        if g in _ZH_STOPWORDS:
+            continue
+        if g in seen:
+            continue
+        seen.add(g)
+        out.append(g)
+    return out
+
+
+# ---------------------------------------------------------------------------
+# 评分
+# ---------------------------------------------------------------------------
+
+
+def score_turns(
+    turns: list[dict],
+    query: str,
+    *,
+    language: str = "zh-CN",
+) -> list[tuple[int, float]]:
+    """给每个 turn 打分。返回 [(index, score), ...]，按 score 倒序。
+
+    评分方式：query token 在 turn content 中出现的次数 / turn content 长度
+    （防止长 turn 靠长度取胜）。
+    """
+    q_tokens = tokenize(query, language=language)
+    if not q_tokens:
+        return []
+
+    scored: list[tuple[int, float]] = []
+    for i, t in enumerate(turns):
+        content = (t.get("content") or "").lower()
+        t_tokens = tokenize(content, language=language)
+        if not t_tokens:
+            continue
+        t_token_set = Counter(t_tokens)
+        hits = sum(t_token_set.get(qt, 0) for qt in q_tokens)
+        if hits == 0:
+            continue
+        # 归一化：除以 turn token 数（避免长 turn 偏置）
+        score = hits / max(1, len(t_tokens))
+        scored.append((i, score))
+
+    scored.sort(key=lambda x: (-x[1], x[0]))
+    return scored
+
+
+def _detect_language(text: str) -> str:
+    """粗判：含 CJK 字符 → zh-CN，否则 en-US。"""
+    for c in text:
+        if "一" <= c <= "鿿":
+            return "zh-CN"
+    return "en-US"
+
+
+def search_top_k(
+    turns: list[dict],
+    query: str,
+    *,
+    k: int = 3,
+    language: str | None = None,
+) -> list[dict]:
+    """按 TF 评分取前 k 个 turn。
+
+    返回的 turn 包含完整"一轮"（user + assistant 配对）：
+      - 如果 user turn 命中，把紧随其后的 assistant turn 也带上
+      - 如果 assistant turn 命中，把前一条 user turn 也带上
+    这样 LLM 看到 Q + A 完整上下文。
+
+    Args:
+        turns: 交替的 [{"role": "user"|"assistant", "content": "..."}, ...]
+        query: 查询字符串（通常是当前 user input）
+        k: 返回的"轮"数（不是 turn 数，每轮是 user+assistant 1-2 条）
+        language: 分词语言；None 时按 query 自动检测
+
+    Returns:
+        按相关性倒序的 turn 列表（去重后保序）
+    """
+    if not turns or not query or k <= 0:
+        return []
+
+    if language is None:
+        language = _detect_language(query)
+
+    scored = score_turns(turns, query, language=language)
+    if not scored:
+        return []
+
+    picked_indices: list[int] = []
+    for idx, _ in scored:
+        if len(picked_indices) >= k * 2:
+            break
+        if idx in picked_indices:
+            continue
+        # 把 user 之后 / assistant 之前的同轮伙伴带上
+        role = turns[idx].get("role")
+        partners: list[int] = []
+        if role == "user" and idx + 1 < len(turns) and turns[idx + 1].get("role") == "assistant":
+            partners.append(idx + 1)
+        elif role == "assistant" and idx - 1 >= 0 and turns[idx - 1].get("role") == "user":
+            partners.append(idx - 1)
+        picked_indices.append(idx)
+        for p in partners:
+            if p not in picked_indices:
+                picked_indices.append(p)
+
+    # 按原顺序输出
+    picked_indices.sort()
+    return [turns[i] for i in picked_indices]
+
+
+def expand_to_rounds(turns: list[dict], indices: Iterable[int]) -> list[dict]:
+    """把一组 turn 索引扩展到完整轮（user + assistant 配对）。"""
+    picked = set(indices)
+    out_indices: set[int] = set()
+    for i in picked:
+        out_indices.add(i)
+        if turns[i].get("role") == "user" and i + 1 < len(turns):
+            out_indices.add(i + 1)
+        elif turns[i].get("role") == "assistant" and i - 1 >= 0:
+            out_indices.add(i - 1)
+    return [turns[i] for i in sorted(out_indices)]
+
+
+# ---------------------------------------------------------------------------
+# Fuzzy 匹配（Phase 6 P2 #12：从 TUI 下沉到 core）
+# ---------------------------------------------------------------------------
+
+
+def fuzzy_match_scores(
+    items: list[T],
+    query: str,
+    *,
+    key: Callable[[T], str],
+    threshold: int = 60,
+) -> list[tuple[int, T]]:
+    """Fuzzy 匹配：返回 [(score, item), ...] 按 score 倒序。
+
+    使用 rapidfuzz.partial_ratio（未装 rapidfuzz 时返回空列表；通过
+    `pip install mmi[fuzzy]` 安装）。
+
+    Args:
+        items: 候选列表
+        query: 查询字符串
+        key: 从 item 提取可搜索文本的函数
+        threshold: 分数阈值（0-100），低于阈值的被过滤
+
+    Returns:
+        按 score 倒序的 [(score, item), ...]
+    """
+    if not query:
+        return []
+    try:
+        from rapidfuzz import fuzz
+    except ImportError:
+        return []
+    scored: list[tuple[int, T]] = []
+    for item in items:
+        text = key(item) or ""
+        score = fuzz.partial_ratio(query, text)
+        if score >= threshold:
+            scored.append((score, item))
+    scored.sort(key=lambda x: x[0], reverse=True)
+    return scored

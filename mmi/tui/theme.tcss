@@ -1,0 +1,58 @@
+/* ctrim TUI 主题 —— 极简暗色（细分割线 + 单背景）
+   参考：OMP / OrcaTerm 视觉语言
+   ARCHITECTURE Phase 5：v2 极简版
+*/
+
+Screen {
+    background: #1a1b26;
+    color: #c0caf5;
+}
+
+Static {
+    color: #c0caf5;
+}
+
+Input {
+    background: #1a1b26;
+    color: #c0caf5;
+    border: none;
+    border-top: solid #414868;
+    height: 1;
+}
+
+Input:focus {
+    border-top: solid #7aa2f7;
+}
+
+Footer {
+    background: #1a1b26;
+    color: #565f89;
+    border-top: solid #414868;
+    height: 1;
+}
+
+Header {
+    background: #1a1b26;
+    color: #bb9af7;
+    text-style: bold;
+    border-bottom: solid #414868;
+}
+
+ListView {
+    background: #1a1b26;
+    color: #c0caf5;
+}
+
+ListView > ListItem {
+    padding: 0 1;
+}
+
+ListView > ListItem.--highlight {
+    background: #2ac3de;
+    color: #1a1b26;
+}
+
+RichLog {
+    background: #1a1b26;
+    color: #c0caf5;
+}
