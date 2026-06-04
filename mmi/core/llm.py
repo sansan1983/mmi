@@ -380,6 +380,162 @@ class OpenAILLMProvider(LLMProvider):
 
 
 # ---------------------------------------------------------------------------
+# Anthropic Provider(独立实现,Anthropic 用自己的消息格式)
+# ---------------------------------------------------------------------------
+
+
+class AnthropicLLMProvider(LLMProvider):
+    """Anthropic Claude 客户端(直连 https://api.anthropic.com)。
+
+    用 httpx 调 /v1/messages,带 x-api-key + anthropic-version 头。
+    不依赖 anthropic SDK(避免多一个包)。
+    """
+
+    name = "anthropic"
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str = "claude-3-5-sonnet-20241022",
+        anthropic_version: str = "2023-06-01",
+    ):
+        import httpx  # 局部导入,避免强制依赖
+
+        if not api_key:
+            api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise LLMError("anthropic api_key not set")
+
+        self.api_key = api_key
+        self.base_url = (base_url or "https://api.anthropic.com").rstrip("/")
+        self.model = model
+        self.anthropic_version = anthropic_version
+        self._client = httpx.Client(timeout=60.0)
+
+    def _post(self, payload: dict) -> dict:
+        """POST /v1/messages,raise LLMError on error。"""
+        import httpx
+        try:
+            resp = self._client.post(
+                f"{self.base_url}/v1/messages",
+                headers={
+                    "x-api-key": self.api_key,
+                    "anthropic-version": self.anthropic_version,
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+            )
+        except httpx.HTTPError as e:
+            raise LLMError(f"Anthropic HTTP error: {e}") from e
+        if resp.status_code >= 400:
+            raise LLMError(
+                f"Anthropic HTTP {resp.status_code}: {(resp.text or '')[:200]}"
+            )
+        try:
+            return resp.json()
+        except Exception as e:
+            raise LLMError(f"Anthropic: bad JSON: {e}") from e
+
+    def chat(self, messages, *, max_tokens=512, temperature=0.7) -> str:
+        # Anthropic 要求 system 和 user 分离
+        system_parts: list[str] = []
+        user_msgs: list[dict] = []
+        for m in messages:
+            role = m.get("role")
+            content = m.get("content") or ""
+            if role == "system":
+                system_parts.append(content)
+            else:
+                user_msgs.append({"role": role, "content": content})
+        payload: dict = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "messages": user_msgs,
+        }
+        if system_parts:
+            payload["system"] = "\n\n".join(system_parts)
+        data = self._post(payload)
+        # 响应格式: {content: [{type: "text", text: "..."}], ...}
+        blocks = data.get("content") or []
+        for b in blocks:
+            if isinstance(b, dict) and b.get("type") == "text":
+                text = b.get("text", "")
+                if text:
+                    return text
+        raise LLMError("Anthropic chat: no text in response")
+
+    async def stream_chat(self, messages, *, max_tokens=512, temperature=0.7):
+        # 简化:不做流式,直接返整段(Anthropic 流式需要 SSE 解析,本轮不做)
+        yield self.chat(messages, max_tokens=max_tokens, temperature=temperature)
+
+    def classify(self, prompt, *, options) -> Classification:
+        if not options:
+            raise LLMError("classify: options must be non-empty")
+        opts_str = " | ".join(options)
+        system = (
+            f"你是一个严格的分类器。从以下选项中选一个：{opts_str}。\n"
+            f'只返回 JSON：{{"choice": "<exactly one of: {opts_str}>", "confidence": <float 0.0-1.0>}}'
+        )
+        try:
+            resp_text = self.chat(
+                [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=128,
+                temperature=0.0,
+            )
+        except LLMError as e:
+            raise LLMError(f"Anthropic classify failed: {e}") from e
+        try:
+            data = json.loads(resp_text)
+        except json.JSONDecodeError:
+            # 兜底:从文本里抠 choice
+            data = {}
+        choice = data.get("choice") if isinstance(data, dict) else None
+        confidence = data.get("confidence", 0.5) if isinstance(data, dict) else 0.5
+        if not choice or choice not in options:
+            choice = options[0]
+        try:
+            confidence = float(confidence)
+        except (TypeError, ValueError):
+            confidence = 0.5
+        confidence = max(0.0, min(1.0, confidence))
+        return Classification(choice=choice, confidence=confidence, raw=resp_text)
+
+
+def _build_provider_from_config() -> LLMProvider:
+    """按 ~/.mmi/config.toml [llm] 构造 provider(供 get_default_provider 优先用)。"""
+    from . import config as cfg_mod
+    from . import providers as prov_mod
+    llm = cfg_mod.get_llm_config()
+    provider_id = llm.get("provider", "").strip().lower()
+    api_key = cfg_mod.resolve_api_key(provider_id)
+    base_url = llm.get("base_url", "").strip() or None
+    model = llm.get("model", "").strip() or "gpt-4o-mini"
+    # api_style 优先级:config 显式 > provider 首选
+    api_style = llm.get("api_style", "").strip()
+    if not api_style:
+        try:
+            info = prov_mod.get_provider(provider_id)
+            api_style = info.preferred_api_style
+        except (ValueError, KeyError):
+            api_style = "openai"
+    if not provider_id or not api_key:
+        return None  # 没配完整,回退到 env
+    try:
+        if api_style == "anthropic":
+            return AnthropicLLMProvider(api_key=api_key, base_url=base_url, model=model)
+        # OpenAI 兼容(默认)
+        return OpenAILLMProvider(api_key=api_key, base_url=base_url, model=model)
+    except LLMError:
+        return None
+
+
+# ---------------------------------------------------------------------------
 # 工厂
 # ---------------------------------------------------------------------------
 
@@ -388,19 +544,37 @@ _DEFAULT_LLM: LLMProvider | None = None
 
 
 def get_default_provider() -> LLMProvider:
-    """从环境变量推断应该用哪个 provider。
+    """从 config / env 推断应该用哪个 provider。
 
-    规则：
-      1. OPENAI_API_KEY 已设置 → OpenAILLMProvider
-      2. 否则 → EchoLLMProvider
+    优先级:
+      1. ~/.mmi/config.toml [llm] 完整配置(provider + api_key + model)
+      2. 环境变量 OPENAI_API_KEY → OpenAILLMProvider
+      3. 环境变量 ANTHROPIC_API_KEY → AnthropicLLMProvider
+      4. 兜底 → EchoLLMProvider
 
-    返回的实例会缓存（单例），节省重复构造。
+    返回的实例会缓存(单例),节省重复构造。
     测试时用 reset_default_provider_for_test() 重置。
     """
     global _DEFAULT_LLM
     if _DEFAULT_LLM is not None:
         return _DEFAULT_LLM
 
+    # 1) config.toml
+    configured = _build_provider_from_config()
+    if configured is not None:
+        _DEFAULT_LLM = configured
+        return _DEFAULT_LLM
+
+    # 2/3) env vars
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        try:
+            _DEFAULT_LLM = AnthropicLLMProvider(
+                api_key=os.environ.get("ANTHROPIC_API_KEY"),
+                model=os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022"),
+            )
+            return _DEFAULT_LLM
+        except LLMError:
+            pass
     if os.environ.get("OPENAI_API_KEY"):
         try:
             _DEFAULT_LLM = OpenAILLMProvider(
@@ -408,16 +582,16 @@ def get_default_provider() -> LLMProvider:
                 base_url=os.environ.get("OPENAI_BASE_URL"),
                 model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
             )
+            return _DEFAULT_LLM
         except LLMError:
-            # OpenAI 配置有问题（比如 base_url 格式错），兜底 echo
-            _DEFAULT_LLM = EchoLLMProvider()
-    else:
-        _DEFAULT_LLM = EchoLLMProvider()
+            pass
 
+    # 4) 兜底 echo
+    _DEFAULT_LLM = EchoLLMProvider()
     return _DEFAULT_LLM
 
 
 def reset_default_provider_for_test() -> None:
-    """测试用：清空缓存的 provider。"""
+    """测试用:清空缓存的 provider。"""
     global _DEFAULT_LLM
     _DEFAULT_LLM = None

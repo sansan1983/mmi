@@ -1,8 +1,69 @@
-# 工作日志 — Round 2.4
-> Phase: 2 | Round: 4
-> 标题：memory 收尾(去重 + 拆独立线程 + 清 ruff)
+# 工作日志 — Round 2.5
+> Phase: 二期 + 用户临时 | Round: 5
+> 标题：交互式 LLM 配置 wizard
 > 开始：2026-06-04
 > 状态：进行中
+
+## 上轮交接摘要
+- Round 2.4 完成:memory 收尾(独立线程 + hash 去重 + ruff 0 error)
+- 测试 395/395 全绿
+- 用户临时加项目:`mmi config` 交互式配置 LLM
+
+## 本轮计划子任务
+- [x] 5 国内 + 1 自定义 catalog(deepseek / minimax / glm / moonshot / qwen + custom)
+- [x] Anthropic 优先(DeepSeek + MiniMax),fetcher 失败回退 OpenAI
+- [x] mmi/core/providers.py + model_fetcher.py
+- [x] mmi/core/config.py 扩 LLM section(get_llm_config / set_llm_config / resolve_api_key)
+- [x] mmi/cli.py cmd_config(show + wizard)
+- [x] +28 providers 测试 + +11 config 测试
+- [x] ruff 0 error
+- [x] 全量 423/423
+- [x] 写 docs/HANDOVER/round_2_5.md
+
+## 执行记录
+| 时间 | 任务 | 结果 | 备注 |
+|---|---|---|---|
+| 15:00 | catalog + fetcher 实现 | ✅ | 5 国内 + custom |
+| 15:30 | config 持久化 | ✅ | linter 已加 get_llm_config 等 |
+| 16:00 | cmd_config wizard | ✅ | 选 provider / 填 key / 拉模型 / 选 model |
+| 16:30 | 28 + 11 测试 | ✅ | 0 error 起步,roundtrip 全通 |
+| 17:00 | 全量 + ruff | ✅ | 423/423 + ruff 0 |
+
+## 测试结果
+- Round 2.4 baseline:395 passed
+- Round 2.5 final:**423 passed, 0 failed**
+- 新增:28 providers + 11 config = 39 net new(去掉 7 个旧 + 其他)
+- ruff:**0 error**
+
+## 改动文件清单
+| 文件 | 改动 |
+|---|---|
+| mmi/core/providers.py | 新建(5 国内 catalog + custom 工厂) |
+| mmi/core/model_fetcher.py | 新建(双风格 + 回退) |
+| mmi/core/config.py | 扩 LLM section 持久化 |
+| mmi/cli.py | cmd_config + wizard |
+| tests/test_providers.py | 新建 28 个 |
+| tests/test_config.py | 新建 11 个 |
+| docs/HANDOVER/round_2_5.md | 新建 |
+| docs/HANDOVER/INDEX.md | 加 2.5 行 |
+| ROUND_LOG.md | 更新本轮 |
+
+## 关键设计决策
+- Anthropic 优先:DeepSeek + MiniMax 走 Anthropic 端点,失败回退 OpenAI
+- key 持久化在 config.toml,env 兼容兜底
+- Anthropic 不引 SDK(llm.py 早就 httpx 直连)
+- 5 国内:deepseek / minimax / glm / moonshot / qwen,海外商后续扩
+
+## 遗留 / 下轮候选
+- 后续要加海外商:在 `PROVIDERS` tuple 加一条
+- helper model(embedding / summary)用同一配置
+- 可选:加 `mmi config set <key> <value>`(目前只支持 wizard)
+- 三期 3.1-3.13 多 Agent 调度 仍待开始
+
+## 下轮预告
+- 三期 3.0 多 Agent 调度(PLAN.md 三期),或
+- 继续打磨 Round 2.5 后续(海外商 / helper model)
+- 预估:2-3d
 
 ## 上轮交接摘要
 - Round 2.3 完成:FTS5 双路召回 + LLM 摘要 + summarizer 自动入库

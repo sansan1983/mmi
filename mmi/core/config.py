@@ -23,6 +23,7 @@ from typing import Any
 import yaml
 
 from . import paths
+from .providers import get_provider
 
 __all__ = [
     "get_default_model",
@@ -31,6 +32,9 @@ __all__ = [
     "load_config",
     "save_config",
     "DEFAULT_MODEL",
+    "get_llm_config",
+    "set_llm_config",
+    "resolve_api_key",
 ]
 
 
@@ -151,3 +155,80 @@ def validate_model_name(name: str) -> bool:
     if not name or not name.strip():
         return False
     return bool(_MODEL_NAME_PATTERN.match(name.strip()))
+
+
+# ---------------------------------------------------------------------------
+# 完整 LLM 配置(供交互式 config wizard 写入)
+# ---------------------------------------------------------------------------
+
+
+def get_llm_config() -> dict[str, str]:
+    """读 [llm] section 的全字段(供 wizard 显示当前状态)。
+
+    Returns:
+        dict with keys: provider, base_url, api_key, model, api_style
+        缺失字段返回空字符串(不抛)
+    """
+    cfg = load_config()
+    section = cfg.get("llm", {})
+    if not isinstance(section, dict):
+        section = {}
+    return {
+        "provider": str(section.get("provider", "") or ""),
+        "base_url": str(section.get("base_url", "") or ""),
+        "api_key": str(section.get("api_key", "") or ""),
+        "model": str(section.get("model", "") or ""),
+        "api_style": str(section.get("api_style", "") or ""),
+    }
+
+
+def set_llm_config(
+    *,
+    provider: str | None = None,
+    base_url: str | None = None,
+    api_key: str | None = None,
+    model: str | None = None,
+    api_style: str | None = None,
+) -> bool:
+    """更新 [llm] section。None 的字段保留旧值。
+
+    注意:此处不写 env var,key 持久化在 config.toml(用户显式选)。
+    写盘失败返回 False(不抛)。
+    """
+    cfg = load_config()
+    if "llm" not in cfg or not isinstance(cfg.get("llm"), dict):
+        cfg["llm"] = {}
+    section = cfg["llm"]
+    if provider is not None:
+        section["provider"] = provider.strip()
+    if base_url is not None:
+        section["base_url"] = base_url.strip()
+    if api_key is not None:
+        section["api_key"] = api_key.strip()
+    if model is not None:
+        section["model"] = model.strip()
+    if api_style is not None:
+        section["api_style"] = api_style.strip()
+    return save_config(cfg)
+
+
+def resolve_api_key(provider: str | None) -> str:
+    """按 provider 解析 api_key,优先级:
+      1. config.toml [llm].api_key(用户显式配)
+      2. 环境变量 <PROVIDER>_API_KEY(回退)
+      3. 空字符串(用户得配)
+
+    provider 为 None 或未知 → 只查 config。
+    """
+    cfg = get_llm_config()
+    if cfg["api_key"]:
+        return cfg["api_key"]
+    if provider:
+        try:
+            info = get_provider(provider)
+            env_k = os.environ.get(info.api_key_env, "")
+            if env_k:
+                return env_k
+        except ValueError:
+            pass
+    return ""
