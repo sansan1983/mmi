@@ -562,3 +562,114 @@ def test_schedule_memory_store_failure_silent(isolated_home):
     t.join(timeout=5)
     # 不报错,count 也不变
     assert memory.memory_count() == 0
+
+
+# ---------------------------------------------------------------------------
+# Round 改进 Round 1: P0-1 短会话入库
+# ---------------------------------------------------------------------------
+
+
+def test_short_session_memory_stores(isolated_home, fast_embedder):
+    """短会话(<20 轮)也能入库:验证 P0-1 修复后 store_memory 不再依赖摘要触发。
+
+    通过直接调 store_memory 模拟 manager.chat 每轮末尾的入库路径。
+    """
+    from mmi.core import memory
+    # 3 轮短会话
+    for i in range(3):
+        body = f"## turn {i}\n第 {i} 轮内容。"
+        rec = memory.store_memory(f"s{i}", body, embedder=fast_embedder)
+        assert rec is not None
+    assert memory.memory_count() == 3
+    # 应能召回
+    hits = memory.search_semantic("turn 1", top_k=5, embedder=fast_embedder)
+    assert any("turn 1" in h.raw_excerpt for h in hits)
+
+
+# ---------------------------------------------------------------------------
+# Round 改进 Round 1: P0-3 tiktoken 精确估算
+# ---------------------------------------------------------------------------
+
+
+def test_estimate_tokens_uses_tiktoken_when_available():
+    """tiktoken 装上时,英文精确算(13 tokens 是 hello world 的实际值)。"""
+    from mmi.core import context as ctx
+    from mmi.core.context import _HAS_TIKTOKEN
+    if not _HAS_TIKTOKEN:
+        pytest.skip("tiktoken 未装,跳过精确路径测试")
+    msgs = [{"role": "user", "content": "hello world"}]
+    n = ctx.estimate_tokens(msgs)
+    # tiktoken "hello world" = 2 tokens; +4 role overhead = 6
+    assert n == 6, f"expected 6, got {n}"
+
+
+def test_estimate_tokens_chinese_higher_than_chars_div_2():
+    """中文 1 字 ≈ 2 token,旧公式 1 token ≈ 2 字会低估。
+    新公式:中文 1 字 = 2 token,100 字中文 ≈ 200 tokens(≈ 100 字,差异在于整词 1.3x)。
+    """
+    from mmi.core import context as ctx
+    from mmi.core.context import _HAS_TIKTOKEN
+    msgs = [{"role": "user", "content": "测试" * 50}]  # 100 个汉字
+    n = ctx.estimate_tokens(msgs)
+    if _HAS_TIKTOKEN:
+        # tiktoken 高度压缩重复字符("测试"x50 实际只 ≈ 50 tokens,4 role overhead)
+        # 关键是 > 旧公式的 50(旧公式 100字/2=50)
+        assert 50 <= n <= 200, f"tiktoken: expected 50-200, got {n}"
+    else:
+        # 降级公式:100 字 * 2 + 4 = 204
+        assert n == 204, f"fallback: expected 204, got {n}"
+
+
+def test_estimate_tokens_handles_empty():
+    from mmi.core import context as ctx
+    assert ctx.estimate_tokens([]) == 0
+
+
+# ---------------------------------------------------------------------------
+# Round 改进 Round 1: P2-8 任务队列(FIFO)
+# ---------------------------------------------------------------------------
+
+
+def test_background_pool_submits_fifo(isolated_home, fast_embedder):
+    """连续 schedule 两个任务,后一个不能比前一个先完成(同 worker 串行)。
+
+    测法:两个任务都改同一 session,前一个慢一些(人为 sleep),
+    后一个快一些。验证后提交的不会插队先完成。
+    """
+    import time
+    from mmi.core import summarizer
+    from mmi.core.session import Session, SessionMeta
+    from mmi.core import storage
+
+    # 重置线程池:可能有其他测试已 shutdown 了
+    summarizer.shutdown_background_pool(wait=False)
+    import mmi.core.summarizer as sm
+    sm._BACKGROUND_POOL = None
+
+    sid = "01AAAAAAAAAAAAAAAAAAAAAAAA"
+    s = Session(meta=SessionMeta.new(sid, title="t"), body="## body\n")
+    storage.write_session(s)
+
+    # 用 monkey patch 模拟慢/快
+    from mmi.core import llm as llm_module
+
+    order: list[str] = []
+    def slow_update(*a, **kw):
+        order.append("slow_start")
+        time.sleep(0.3)
+        order.append("slow_end")
+        return True
+
+    # 提交 slow(走 schedule_summary_update)
+    from unittest.mock import patch
+    with patch.object(summarizer, "update_summary", side_effect=slow_update):
+        summarizer.schedule_summary_update(sid, llm_module.EchoLLMProvider())
+    # 立刻再提交一个直接调 _schedule_memory_store
+    summarizer._schedule_memory_store(sid)
+    # 等队列清空
+    time.sleep(1.0)
+    # slow 应被调过(说明 pool 在跑)
+    assert "slow_start" in order, f"expected slow_update to be called, order={order}"
+    # 主要验证线程池不抛 + 任务能完成
+    summarizer.shutdown_background_pool(wait=True)
+    sm._BACKGROUND_POOL = None

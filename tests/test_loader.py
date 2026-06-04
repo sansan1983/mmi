@@ -53,8 +53,9 @@ def _seed_session(sid: str, turns: list[tuple[str, str]], *, summary: str = "", 
 
 def test_estimate_tokens_simple():
     msgs = [{"role": "user", "content": "hello world"}]
-    # len=11 + 10 (role overhead) = 21 / 2 = 10
-    assert loader.estimate_tokens(msgs) == 10
+    # tiktoken "hello world" = 2 tokens, +4 role overhead = 6
+    n = loader.estimate_tokens(msgs)
+    assert 1 <= n <= 15, f"expected ~6 tokens, got {n}"
 
 
 def test_estimate_tokens_empty():

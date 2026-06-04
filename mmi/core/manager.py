@@ -207,9 +207,18 @@ class SessionManager:
         # 3) 追加 turn
         s = storage.append_turn(session_id, user_input, reply)
 
-        # 4) 摘要更新检查（§8.3）—— should_update 同步判，update 后台跑
-        #   Phase 6：避免 LLM 慢调用阻塞 chat 主流程；UI 看到 summary_updated
-        #   是"将要更新"的乐观信号，实际落盘在后台。
+        # 4) 跨会话记忆入库(每轮都跑,不等摘要)
+        #   短会话(<20 轮/5000 字/24h)不触发摘要,但记忆照样要进库
+        #   content_hash 已做去重,重复 body 不会重复入库
+        try:
+            summarizer._schedule_memory_store(session_id)
+        except Exception:
+            # store_memory 自身已静默,这里再兜一次
+            pass
+
+        # 5) 摘要更新检查(§8.3)—— should_update 同步判,update 后台跑
+        #   Phase 6:避免 LLM 慢调用阻塞 chat 主流程;UI 看到 summary_updated
+        #   是"将要更新"的乐观信号,实际落盘在后台。
         try:
             will_update = summarizer.should_update_summary(s.meta, s.body)
         except Exception:
@@ -220,7 +229,7 @@ class SessionManager:
             )
         summary_updated = will_update
 
-        # 5) 检查点
+        # 6) 检查点
         trashed = False
         trashed_reason = ""
         title_updated = False

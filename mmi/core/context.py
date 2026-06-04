@@ -49,9 +49,16 @@ DEFAULT_RECENT_TURNS = 10
 # §6.2: 关键词命中 top_k 段
 DEFAULT_HIT_PARAGRAPHS = 3
 
-# Token 估算：保守值 1 token ≈ 2 字符（英文 4 字符/token + 中文 1.5 字符/token 平均）
-# 不用 tiktoken（多一个依赖），要更准再换
-_CHARS_PER_TOKEN = 2
+# Token 估算：优先 tiktoken 精确(cl100k_base),降级为中英文区分
+# 中文 1 字 ≈ 2 token,英文 1 词 ≈ 1.3 token(粗估)
+try:
+    import tiktoken
+    _TIKTOKEN_ENC = tiktoken.get_encoding("cl100k_base")
+    _HAS_TIKTOKEN = True
+except ImportError:
+    _TIKTOKEN_ENC = None
+    _HAS_TIKTOKEN = False
+_CHARS_PER_TOKEN = 2  # 仅降级路径用
 
 
 @dataclass
@@ -306,16 +313,31 @@ def compose_messages(
 
 
 def estimate_tokens(messages: list[dict]) -> int:
-    """粗估 token 数：1 token ≈ 2 字符（保守值）。
+    """粗估 token 数。
 
-    不引入 tiktoken 依赖；要更准再换。
+    优先 tiktoken(cl100k_base,GPT-4o 编码)精确算;
+    装不上时降级为中英文区分:
+      - 中文 1 字 ≈ 2 token
+      - 英文 1 词 ≈ 1.3 token
     """
+    if _HAS_TIKTOKEN:
+        total = 0
+        for m in messages:
+            text = m.get("content") or ""
+            # role 标签("system"/"user"/"assistant")也占 token
+            total += len(_TIKTOKEN_ENC.encode(text)) + 4
+        return total
+    # 降级:区分中英文
+    import re
     total = 0
     for m in messages:
-        total += len(m.get("content") or "")
-        # role 标签也占 token
-        total += 10
-    return total // _CHARS_PER_TOKEN
+        text = m.get("content") or ""
+        cn = sum(1 for c in text if '一' <= c <= '鿿' or
+                                '㐀' <= c <= '䶿')
+        en_text = re.sub(r'[一-鿿㐀-䶿]', ' ', text)
+        en_words = max(1, len(en_text.split()))
+        total += cn * 2 + int(en_words * 1.3) + 4  # role 标签
+    return total
 
 
 def _truncate(

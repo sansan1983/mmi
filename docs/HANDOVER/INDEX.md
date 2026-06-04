@@ -10,9 +10,11 @@
 | Round 文件 | 日期 | 覆盖 PLAN.md 任务 | 主题 |
 |---|---|---|---|
 | `round_2.md` | 2026-06-03 | **2.1** | SessionMeta 时间字段 + cold→zombie 升级 + manager 写竞态修复 |
-| `round_2_2.md` | 2026-06-03 | **2.2, 2.3, 2.4, 2.6, 2.7, 2.8, 2.9, 2.10** | FAISS + memory 模块 + CLI + context 集成(8 项) |
+| `round_2_2.md` | 2026-06-03 | **2.2, 2.3, 2.4, 2.6, 2.7, 2.8, 2.9, 2.10**(8 项) | FAISS + memory 模块 + CLI + context 集成 |
 | `round_2_3.md` | 2026-06-04 | **2.5**(补 2.2 漏的) | LLM 版 build_structured_summary + FTS5 双路 + summarizer 自动入库 |
 | `round_2_4.md` | 2026-06-04 | **无**(bonus 收尾) | memory 入库拆独立线程 + content_hash 去重 + 清 ruff |
+| `round_2_5.md` | 2026-06-04 | **无**(用户临时加的小项目) | 交互式 LLM 配置 wizard:5 国内商 + 1 自定义 + Anthropic 优先 |
+| `round_3.md` | 2026-06-04 | **临时变更计划 改进 Round 1** | P0-1 短会话入库 + P0-3 tiktoken + P2-8 任务队列(三期顺延) |
 
 ---
 

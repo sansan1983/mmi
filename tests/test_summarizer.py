@@ -236,17 +236,18 @@ def test_update_summary_unknown_session(isolated_home):
 
 
 def test_schedule_summary_update_returns_thread(isolated_home):
-    """schedule_summary_update 应当返回一个 Thread（daemon=True）。"""
-    import threading
+    """schedule_summary_update 应当返回一个 Thread-like 包装(daemon=True 语义)。"""
     from mmi.core import manager as mgr_module
     from tests.conftest import ScriptedLLM
 
     mgr = mgr_module.SessionManager(llm=ScriptedLLM())
     sid = mgr.create()
     t = summarizer.schedule_summary_update(sid, ScriptedLLM())
-    assert isinstance(t, threading.Thread)
-    assert t.daemon is True
+    # 兼容 Thread API:.join(timeout=) / .is_alive()
+    assert hasattr(t, "join") and callable(t.join)
+    assert hasattr(t, "is_alive") and callable(t.is_alive)
     t.join(timeout=2.0)  # 清理
+    assert not t.is_alive()
 
 
 def test_schedule_summary_update_does_not_block(isolated_home):

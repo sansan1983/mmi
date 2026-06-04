@@ -24,6 +24,7 @@ ARCHITECTURE.md §6.3 / §8.3：
 from __future__ import annotations
 
 import threading
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -200,80 +201,111 @@ def update_summary(
 # ---------------------------------------------------------------------------
 
 
+# 全局单线程池:FIFO 顺序执行,避免多后台线程同时改 frontmatter 竞态
+# (max_workers=1 是关键:2 个任务同时改同 session,会让一份更新丢失)
+_BACKGROUND_POOL: ThreadPoolExecutor | None = None
+_POOL_LOCK = threading.Lock()
+
+
+def _get_pool() -> ThreadPoolExecutor:
+    global _BACKGROUND_POOL
+    if _BACKGROUND_POOL is None:
+        with _POOL_LOCK:
+            if _BACKGROUND_POOL is None:
+                _BACKGROUND_POOL = ThreadPoolExecutor(
+                    max_workers=1, thread_name_prefix="mmi-bg",
+                )
+    return _BACKGROUND_POOL
+
+
+class _ThreadLike:
+    """轻量包装,保留 Thread 风格的 .join(timeout=...) / .is_alive() 接口。"""
+
+    def __init__(self, future: Future):
+        self._f = future
+        self._daemon = True   # ThreadPoolExecutor 内部都是非阻塞,语义近似 daemon
+
+    def join(self, timeout: float | None = None) -> None:
+        try:
+            self._f.result(timeout=timeout)
+        except Exception:
+            # 跟 threading.Thread.join 一致:不抛,只静默等
+            pass
+
+    def is_alive(self) -> bool:
+        return not self._f.done()
+
+
 def schedule_summary_update(
     session_id: str,
     llm: LLMProvider,
     *,
     language: str = "zh-CN",
-) -> threading.Thread:
-    """非阻塞：起后台线程跑 update_summary，立即返回。
+) -> _ThreadLike:
+    """非阻塞:提交 update_summary 到单线程池,立即返回。
 
-    用途：manager.chat() 末尾用，避免 LLM 调用阻塞 chat 主流程。
-    失败静默（与 update_summary 一致：不更新，下次再试）。
-    并发：多次调用会起多个线程；storage.write_session 内部加锁保证
-    不会撕裂文件；最坏情况是某次更新被覆盖，summary_history 仍保留。
+    用途:manager.chat() 末尾用,避免 LLM 调用阻塞 chat 主流程。
+    失败静默(与 update_summary 一致:不更新,下次再试)。
+    并发:全模块共用 1 个 worker,任务按 FIFO 顺序执行,不会跟
+    _schedule_memory_store 抢同一 session 的文件锁。
 
     Args:
         session_id: 会话 ID
         llm: LLMProvider 实例
-        language: 摘要语言（zh-CN / en-US）
+        language: 摘要语言(zh-CN / en-US)
 
     Returns:
-        启动的 Thread（daemon=True，主进程退出时自动结束）。
-        调用方一般不需要 join；测试时可用 .join(timeout=...) 等待。
+        _ThreadLike 包装的 Future(daemon).join(timeout=...) 等待任务结束。
     """
     def _run() -> None:
         try:
             ok = update_summary(session_id, llm, language=language)
             if ok:
-                # 摘要写成功后再起一个独立线程做入库
-                # 好处:update_summary 的 LLM 慢调用完成后立刻释放本线程,
-                # 入库(读 body + embedding)放独立线程不互相阻塞
-                _schedule_memory_store(session_id)
+                # 摘要写成功后顺带入库(同线程池,FIFO 跟在摘要后)
+                # 入库 IO 放摘要线程里跑,避免再起一个独立线程
+                _run_memory_store(session_id)
         except Exception:
-            # 后台线程：任何异常都吞掉，不影响主流程
+            # 后台线程:任何异常都吞掉,不影响主流程
             pass
 
-    t = threading.Thread(
-        target=_run,
-        daemon=True,
-        name=f"summary-{session_id[:8]}",
-    )
-    t.start()
-    return t
+    future = _get_pool().submit(_run)
+    return _ThreadLike(future)
 
 
-def _schedule_memory_store(session_id: str) -> threading.Thread:
-    """起一个独立线程跑 store_memory。
+def _schedule_memory_store(session_id: str) -> _ThreadLike:
+    """提交 store_memory 到线程池(每轮 chat 都调,等摘要触发也调)。
 
-    与 schedule_summary_update 解耦:
-      - summary 线程只管 update_summary,跑完即结束
-      - memory 线程读 body + embedding + 写 SQLite/FAISS
-      - 两个线程之间无锁竞争(读最新 body 在 memory 线程里做)
+    与 schedule_summary_update 共用同一线程池,任务 FIFO。
     """
-    def _run() -> None:
-        try:
-            body, turns_at = _read_body_for_memory(session_id)
-            if not body:
-                return
-            from . import memory as memory_module
-            try:
-                memory_module.store_memory(
-                    session_id, body, turns_at=turns_at,
-                )
-            except Exception:
-                # 记忆入库失败不抛:摘要是关键路径,记忆是锦上添花
-                pass
-        except Exception:
-            pass
+    future = _get_pool().submit(_run_memory_store, session_id)
+    return _ThreadLike(future)
 
-    t = threading.Thread(
-        target=_run,
-        daemon=True,
-        name=f"memstore-{session_id[:8]}",
-    )
-    t.start()
-    return t
+
+def _run_memory_store(session_id: str) -> None:
+    """线程池 worker:读 body + 调 store_memory。"""
+    try:
+        body, turns_at = _read_body_for_memory(session_id)
+        if not body:
+            return
+        from . import memory as memory_module
+        try:
+            memory_module.store_memory(
+                session_id, body, turns_at=turns_at,
+            )
+        except Exception:
+            # 记忆入库失败不抛:摘要是关键路径,记忆是锦上添花
+            pass
+    except Exception:
+        pass
+
+
+def shutdown_background_pool(wait: bool = True) -> None:
+    """关闭线程池(测试 teardown / 进程退出用)。"""
+    global _BACKGROUND_POOL
+    with _POOL_LOCK:
+        if _BACKGROUND_POOL is not None:
+            _BACKGROUND_POOL.shutdown(wait=wait)
+            _BACKGROUND_POOL = None
 
 
 def _read_body_for_memory(session_id: str) -> tuple[str, int]:
