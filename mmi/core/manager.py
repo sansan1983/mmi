@@ -313,7 +313,9 @@ class SessionManager:
         old_heat = s.meta.heat
         old_state = s.meta.state
         old_cold_since = s.meta.cold_since
-        heat_module.apply_heat_and_state(s.meta)
+        # P2-9:传 total_turns 让 heat 算 content_weight
+        n_user_turns = s.body.count("**User:**")
+        heat_module.apply_heat_and_state(s.meta, total_turns=n_user_turns)
         if (
             s.meta.heat != old_heat
             or s.meta.state != old_state

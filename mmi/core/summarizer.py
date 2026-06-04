@@ -57,6 +57,8 @@ MIN_TURNS_DELTA = 20             # 触发 1：自上次摘要 ≥ 20 轮
 MIN_CHARS_DELTA = 5000           # 触发 2：自上次摘要 ≥ 5000 字符
 MIN_HOURS_SINCE = 24             # 触发 3：距上次摘要 > 24h
 MIN_TURNS_FOR_LONG_GAP = 5       # 触发 3：且新增 ≥ 5 轮
+# P1-7 改进:每 N 轮强制全量重建,防增量摘要漂移
+FULL_REBUILD_EVERY = 100         # ≥ 100 轮未全量 → 下次走全量路径
 
 DEFAULT_SUMMARY_PROMPT_ZH = (
     "请用 1-2 句话（中文，30-80 字）总结以下对话的核心主题。\n"
@@ -119,13 +121,13 @@ def update_summary(
 ) -> bool:
     """调 LLM 重生摘要，写回 frontmatter。
 
-    不自己加锁（写盘走 storage.write_session 自己的锁），避免重入。
-    失败时（LLM 调不通、文件 IO 错）不更新，下次再试。
-    并发场景：两个 chat 同时 update 会让一个的更新被覆盖 —— 可接受
-    （下次再生成就行，summary_history 不会丢，因为 push 在调用前已做）。
+    P1-7 改进:增量更新(只发新 turns) + 每 100 轮强制全量重建。
+      - 增量模式:输入 = 旧摘要 + 自上次摘要以来的新增 turns
+      - 全量模式:输入 = 旧摘要 + 全文(兜底,防漂移)
+      - 失败时不更新,下次再试
 
     Returns:
-        True = 已更新；False = 失败 / 不需要更新
+        True = 已更新;False = 失败 / 不需要更新
     """
     if now is None:
         now = datetime.now(timezone.utc)
@@ -141,12 +143,24 @@ def update_summary(
     if not should_update_summary(meta, body, now=now):
         return False
 
-    # 调 LLM 生成新摘要（无锁状态；可能耗时）
+    # P1-7:每 FULL_REBUILD_EVERY 轮强制全量重建,防增量漂移
+    last_t = last_summary_turns(meta)
+    current_turns = body.count("**User:**")
+    is_full = (last_t == 0) or (current_turns - last_t >= FULL_REBUILD_EVERY)
+
+    if is_full:
+        new_body = body
+    else:
+        # 增量:取自上次摘要以来的新 turn
+        new_body = _extract_new_turns(body, last_t)
+
+    # 调 LLM 生成新摘要(无锁状态;可能耗时)
     prompt_system = (
         DEFAULT_SUMMARY_PROMPT_ZH if language.startswith("zh")
         else DEFAULT_SUMMARY_PROMPT_EN
     )
-    user_msg = _build_summary_input(meta.summary, body, language=language)
+    user_msg = _build_summary_input(meta.summary, new_body, language=language,
+                                   incremental=not is_full)
     try:
         new_summary = llm.chat(
             [
@@ -163,7 +177,7 @@ def update_summary(
     if not new_summary:
         return False
 
-    # 推入 history（在内存里做；最后 write_session 一次性落盘）
+    # 推入 history(在内存里做;最后 write_session 一次性落盘)
     if meta.summary:
         meta.summary_history.append({
             "version": meta.summary_version,
@@ -176,7 +190,7 @@ def update_summary(
     meta.summary = new_summary
     meta.summary_version += 1
 
-    # 写回（不重写 body）—— 在文件锁内重读 + 合并 + 写，
+    # 写回(不重写 body)—— 在文件锁内重读 + 合并 + 写,
     # 避免与 manager._recompute_heat 等并发写入产生 lost-update。
     try:
         with storage._exclusive_lock(session_id):
@@ -185,7 +199,7 @@ def update_summary(
             s2.meta.summary_version = meta.summary_version
             s2.meta.summary_history = meta.summary_history
             s2.meta.updated_at = utcnow_iso()
-            # 直接 _atomic_write：write_session 会再 lock 死锁
+            # 直接 _atomic_write:write_session 会再 lock 死锁
             storage._atomic_write(
                 storage.session_path(session_id),
                 storage._dump_frontmatter(s2.meta) + s2.body,
@@ -363,17 +377,59 @@ def _build_summary_input(
     body: str,
     *,
     language: str,
+    incremental: bool = False,
 ) -> str:
-    """拼出给 LLM 的 user message。"""
+    """拼出给 LLM 的 user message。
+
+    incremental=True 时(P1-7 增量模式),body 只是新增 turns,不是全文。
+    提示词明确告诉 LLM "这是新增的对话,旧摘要还在,只需要更新"。
+    """
     if language.startswith("zh"):
+        if incremental:
+            header = "旧摘要:\n" if old_summary else "(无旧摘要)\n"
+            return (
+                f"{header}{old_summary}\n\n"
+                f"新增对话(自上次摘要以来):\n{body}\n\n"
+                f"请基于旧摘要+新增对话,更新成一份连贯的摘要:"
+            )
         header = "旧摘要：\n"
         if not old_summary:
             header = "（无旧摘要）\n"
         return f"{header}{old_summary}\n\n对话全文：\n{body}\n\n请生成新摘要："
+    if incremental:
+        header = "Old summary:\n" if old_summary else "(no previous summary)\n"
+        return (
+            f"{header}{old_summary}\n\n"
+            f"New turns (since last summary):\n{body}\n\n"
+            f"Please update the summary to incorporate the new turns:"
+        )
     header = "Old summary:\n"
     if not old_summary:
         header = "(no previous summary)\n"
     return f"{header}{old_summary}\n\nFull conversation:\n{body}\n\nGenerate new summary:"
+
+
+def _extract_new_turns(body: str, last_turn_count: int) -> str:
+    """P1-7 增量:从 body 提取 last_turn_count 之后的 turn。
+
+    body 格式按"## 日期"分段,每段下面 user/assistant 配对。
+    简化实现:从第 last_turn_count 个 `**User:**` 之后开始切。
+    """
+    if last_turn_count <= 0:
+        return body
+    # 找第 last_turn_count 个 User 标记的位置
+    pos = 0
+    found = 0
+    needle = "**User:**"
+    while True:
+        i = body.find(needle, pos)
+        if i == -1:
+            break
+        found += 1
+        if found == last_turn_count:
+            return body[i:]
+        pos = i + len(needle)
+    return body  # 找不到说明 turn 数对不上,全量
 
 
 def _clean_summary(text: str, *, language: str) -> str:

@@ -140,18 +140,31 @@ def compute_heat(
     last_access: datetime,
     created_at: datetime,
     now: datetime | None = None,
+    total_turns: int = 0,
 ) -> float:
-    """算 heat（ARCHITECTURE.md §8.4 公式）。
+    """算 heat(ARCHITECTURE.md §8.4 公式)。
 
-    heat = access_count * 1.0 + recency_bonus(last_access) - age_penalty(created_at)
+    P2-9 简化版增强:
+      raw = access_count * 1.0 + recency_bonus - age_penalty
+      heat = raw + content_bonus
+    其中 content_bonus = min(2.0, total_turns / 25)
+    (50 轮以上封顶 +2 额外加分,短会话不加)
+
+    不用乘法(content_weight)的原因:那样 0 turn → heat 0,会扰乱 state 推导。
+    用加法:基础 heat 不变,长对话额外 +0~2。
+
+    不做关键词规则(避免启发式 + 词典维护成本),纯按 turn 数衡量"内容重要度"。
+
+    heat 可以是负数(很久没访问 + 很老的会话)
     """
     if now is None:
         now = datetime.now(timezone.utc)
     bonus = recency_bonus(last_access, now=now)
     penalty = age_penalty(created_at, now=now)
     raw = access_count * ACCESS_WEIGHT + bonus - penalty
-    # 不强制为非负：heat 可以是负数（很久没访问 + 很老的会话）
-    return raw
+    # P2-9:内容加成(短会话不加,长对话 50 轮以上封顶 +2)
+    content_bonus = min(2.0, max(0.0, total_turns) / 25.0)
+    return raw + content_bonus
 
 
 # ---------------------------------------------------------------------------
@@ -242,10 +255,11 @@ def derive_state(
 
 
 def apply_heat_and_state(
-    meta,  # SessionMeta（避免在 heat.py 里强 import session.py 形成循环）
+    meta,  # SessionMeta(避免在 heat.py 里强 import session.py 形成循环)
     *,
     now: datetime | None = None,
     config: HeatConfig | None = None,
+    total_turns: int = 0,
 ) -> None:
     """原地更新 meta 的 heat / state / cold_since（写 frontmatter 时一起带出去）。
 
@@ -269,12 +283,13 @@ def apply_heat_and_state(
     created_at = _parse_iso_utc(meta.created_at)
     cold_since = _parse_iso_utc(meta.cold_since) if hasattr(meta, "cold_since") else None
 
-    # 算 heat
+    # 算 heat(P2-9:total_turns 给 content_weight,默认 0 = 短会话等效旧公式)
     new_heat = compute_heat(
         access_count=meta.access_count,
         last_access=last_access if last_access is not None else now,
         created_at=created_at if created_at is not None else now,
         now=now,
+        total_turns=total_turns,
     )
 
     # 算 state

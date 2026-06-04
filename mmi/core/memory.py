@@ -342,6 +342,92 @@ def _save_faiss_index(idx) -> None:
 
 
 # ---------------------------------------------------------------------------
+# 内存池 (P2-10):避免每条入库都重写整个 FAISS 索引
+# ---------------------------------------------------------------------------
+#
+# 之前:每次 store_memory 都 idx.add() + write_index(全量) + write_ids
+#       → 1000 条记忆 ≈ 1000 次 ~2MB 文件写,IO 爆
+# 现在:维护 _INMEM_INDEX + _INMEM_IDS,首次 lazy load(从磁盘读)
+#       每次 add() 仅内存操作;写盘靠 _maybe_flush() 节流
+#
+# 进程崩溃容忍:
+#   - 已 commit 到 SQLite 的 record 是"权威";FAISS 只是向量索引
+#   - 启动时 _ensure_loaded() 从磁盘读完整索引 → 永远一致
+#   - 内存里未 flush 的向量只是"少召几条",不影响正确性
+#
+# 失效:
+#   - reset_for_test() 显式清空(测试隔离)
+#   - 维度不匹配(_INMEM_INDEX 是按首次 embedder 维度建的)
+#     → 重建空索引;不报错(用户切模型是允许的)
+
+_INMEM_INDEX = None         # faiss.IndexFlatL2 | None
+_INMEM_IDS: list[str] = []
+_INMEM_DIM: int = 0
+_INMEM_DIRTY: int = 0        # 累计 add 次数,达到 FLUSH_THRESHOLD 触发 flush
+_INMEM_LOADED = False        # 防止重复读盘
+
+# 50 条/5 分钟触发 flush(可调)
+FLUSH_THRESHOLD = 50
+FLUSH_INTERVAL_S = 300.0
+_LAST_FLUSH_TIME = 0.0
+
+_INMEM_LOCK = threading.Lock()
+
+
+def _ensure_loaded(dim: int) -> None:
+    """懒加载:首次访问时从磁盘读索引 + ids 到内存。
+
+    线程安全;维度不匹配 → 重建空索引(允许切 embedding 模型)。
+    """
+    global _INMEM_INDEX, _INMEM_IDS, _INMEM_DIM, _INMEM_LOADED
+    if _INMEM_LOADED and _INMEM_DIM == dim:
+        return
+    with _INMEM_LOCK:
+        if _INMEM_LOADED and _INMEM_DIM == dim:
+            return
+        _INMEM_INDEX = _load_faiss_index(dim)
+        _INMEM_IDS = _load_faiss_ids()
+        _INMEM_DIM = dim
+        _INMEM_DIRTY = 0
+        _INMEM_LOADED = True
+
+
+def _maybe_flush() -> None:
+    """阈值触发 flush:dirty >= FLUSH_THRESHOLD。
+
+    写盘失败不阻塞主流程(下次再试)。
+    """
+    global _INMEM_DIRTY
+    if _INMEM_INDEX is None:
+        return
+    if _INMEM_DIRTY < FLUSH_THRESHOLD:
+        return
+    with _INMEM_LOCK:
+        if _INMEM_DIRTY < FLUSH_THRESHOLD:
+            return
+        try:
+            _save_faiss_index(_INMEM_INDEX)
+            _save_faiss_ids(_INMEM_IDS)
+            _INMEM_DIRTY = 0
+        except Exception:
+            pass
+
+
+def flush_faiss() -> None:
+    """显式 flush(测试 / 进程退出用)。"""
+    global _INMEM_DIRTY
+    if _INMEM_INDEX is None:
+        return
+    with _INMEM_LOCK:
+        try:
+            _save_faiss_index(_INMEM_INDEX)
+            _save_faiss_ids(_INMEM_IDS)
+            _INMEM_DIRTY = 0
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
 # 公开 API
 # ---------------------------------------------------------------------------
 
@@ -541,20 +627,20 @@ def store_memory(
         )
         conn.commit()
 
-    # 3) FAISS 写向量（仅在 embedding 成功时）
+    # 3) FAISS 写向量(仅在 embedding 成功时) — P2-10 内存池
     if vector:
+        global _INMEM_DIRTY
         try:
-            with _faiss_lock:
-                idx = _load_faiss_index(emb.dim)
-                ids = _load_faiss_ids()
+            _ensure_loaded(emb.dim)
+            with _INMEM_LOCK:
                 import numpy as np
                 vec = np.array([vector], dtype="float32")
-                idx.add(vec)
-                ids.append(memory_id)
-                _save_faiss_index(idx)
-                _save_faiss_ids(ids)
+                _INMEM_INDEX.add(vec)
+                _INMEM_IDS.append(memory_id)
+                _INMEM_DIRTY += 1
+            _maybe_flush()  # 阈值外只 dirty,不写盘
         except Exception:
-            # FAISS 写失败不阻塞主流程（SQLite 已有 record）
+            # FAISS 写失败不阻塞主流程(SQLite 已有 record)
             pass
 
     return record
@@ -622,7 +708,7 @@ def search_semantic(
 def _search_faiss(
     query: str, *, top_k: int, embedder: Embedder | None,
 ) -> list[MemoryRecord]:
-    """单跑 FAISS 路径(供双路 + 测试用)。"""
+    """单跑 FAISS 路径(供双路 + 测试用)。走 P2-10 内存池。"""
     emb = embedder or get_embedder()
     try:
         vector = emb.embed(query)
@@ -631,12 +717,13 @@ def _search_faiss(
     if not vector:
         return []
     try:
-        with _faiss_lock:
-            idx = _load_faiss_index(emb.dim)
-            ids = _load_faiss_ids()
+        _ensure_loaded(emb.dim)
+        with _INMEM_LOCK:
+            idx = _INMEM_INDEX
+            ids = list(_INMEM_IDS)
     except Exception:
         return []
-    if idx.ntotal == 0 or not ids:
+    if idx is None or idx.ntotal == 0 or not ids:
         return []
     import numpy as np
     vec = np.array([vector], dtype="float32")
@@ -853,13 +940,21 @@ def memory_count() -> int:
 
 
 def clear_memories() -> None:
-    """清空所有记忆（测试用 / CLI 显式 reset）。"""
+    """清空所有记忆(测试用 / CLI 显式 reset)。"""
     with _db_lock:
         conn = _get_conn()
         # FTS5 由触发器自动同步(DELETE on memories 触发 DELETE on memories_fts)
         conn.execute("DELETE FROM memories")
         conn.commit()
-    with _faiss_lock:
+    with _INMEM_LOCK:
+        # P2-10 内存池:清空,下次 lazy load 重新建空索引
+        global _INMEM_INDEX, _INMEM_IDS, _INMEM_DIRTY, _INMEM_LOADED, _INMEM_DIM
+        _INMEM_INDEX = None
+        _INMEM_IDS = []
+        _INMEM_DIRTY = 0
+        _INMEM_LOADED = False
+        _INMEM_DIM = 0
+        # 也清磁盘
         _save_faiss_ids([])
         p = _faiss_index_path()
         if p.exists():

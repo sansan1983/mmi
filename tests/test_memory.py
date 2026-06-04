@@ -673,3 +673,156 @@ def test_background_pool_submits_fifo(isolated_home, fast_embedder):
     # 主要验证线程池不抛 + 任务能完成
     summarizer.shutdown_background_pool(wait=True)
     sm._BACKGROUND_POOL = None
+
+
+# ---------------------------------------------------------------------------
+# Round 改进 Round 3: P2-10 FAISS 内存池
+# ---------------------------------------------------------------------------
+
+
+def test_faiss_pool_lazy_loads_on_first_store(isolated_home, fast_embedder):
+    """首次 store_memory → 触发 _ensure_loaded(从磁盘读空索引)。"""
+    from mmi.core import memory
+    # 首次 store:load 索引
+    rec = memory.store_memory("s1", "## topic A\n", embedder=fast_embedder)
+    assert memory._INMEM_INDEX is not None
+    assert memory._INMEM_DIM == fast_embedder.dim
+    # _INMEM_IDS 存的是 memory_id(ULID),不是 session_id
+    assert rec.memory_id in memory._INMEM_IDS
+    assert len(memory._INMEM_IDS) == 1
+
+
+def test_faiss_pool_does_not_flush_below_threshold(isolated_home, fast_embedder, tmp_path, monkeypatch):
+    """P2-10:FLUSH_THRESHOLD=50 之前不写盘,只是 dirty 累加。"""
+    from mmi.core import memory
+    # 用 monkeypatch 监控写盘
+    save_count = {"n": 0}
+    orig_save = memory._save_faiss_index
+    def counting_save(idx):
+        save_count["n"] += 1
+        orig_save(idx)
+    monkeypatch.setattr(memory, "_save_faiss_index", counting_save)
+
+    # 30 条(低于 50 阈值)
+    for i in range(30):
+        body = f"## topic {i}\ncontent {i}"
+        memory.store_memory(f"s{i}", body, embedder=fast_embedder)
+    # dirty 应为 30,但写盘次数 = 0
+    assert memory._INMEM_DIRTY == 30
+    assert save_count["n"] == 0
+
+    # 强制 flush
+    memory.flush_faiss()
+    assert save_count["n"] == 1
+    assert memory._INMEM_DIRTY == 0
+
+
+def test_faiss_pool_flushes_at_threshold(isolated_home, fast_embedder, monkeypatch):
+    """50 条入库应触发自动 flush。"""
+    from mmi.core import memory
+    save_count = {"n": 0}
+    orig_save = memory._save_faiss_index
+    def counting_save(idx):
+        save_count["n"] += 1
+        orig_save(idx)
+    monkeypatch.setattr(memory, "_save_faiss_index", counting_save)
+
+    for i in range(51):  # 跨越 50 阈值
+        memory.store_memory(f"s{i}", f"## topic {i}\nbody {i}", embedder=fast_embedder)
+    # 至少 1 次 flush
+    assert save_count["n"] >= 1
+
+
+def test_faiss_pool_persists_across_reload(isolated_home, fast_embedder, tmp_path, monkeypatch):
+    """flush 后 → 新线程/进程能 reload 完整索引。"""
+    from mmi.core import memory
+    # 存 5 条,强制 flush
+    for i in range(5):
+        memory.store_memory(f"s{i}", f"## t{i}\nc{i}", embedder=fast_embedder)
+    memory.flush_faiss()
+
+    # 模拟"重置"清内存池,触发 lazy reload
+    monkeypatch.setattr(memory, "_INMEM_INDEX", None)
+    monkeypatch.setattr(memory, "_INMEM_IDS", [])
+    monkeypatch.setattr(memory, "_INMEM_LOADED", False)
+    # 不动磁盘 → 应该 reload 到同样的 5 条
+    memory._ensure_loaded(fast_embedder.dim)
+    assert len(memory._INMEM_IDS) == 5
+
+
+# ---------------------------------------------------------------------------
+# Round 改进 Round 3: P1-7 增量摘要
+# ---------------------------------------------------------------------------
+
+
+def test_extract_new_turns(isolated_home):
+    """从 body 提取 last_turn_count 之后的 turn。"""
+    from mmi.core import summarizer
+    body = (
+        "**User:** turn 1\n**Assistant:** reply 1\n"
+        "**User:** turn 2\n**Assistant:** reply 2\n"
+        "**User:** turn 3\n**Assistant:** reply 3\n"
+    )
+    # last=0 → 全文
+    assert summarizer._extract_new_turns(body, 0) == body
+    # last=2 → 从第 3 个 User 之后开始
+    new = summarizer._extract_new_turns(body, 2)
+    assert "turn 3" in new
+    assert "turn 1" not in new
+
+
+def test_full_rebuild_every_constant():
+    """FULL_REBUILD_EVERY = 100(防增量漂移)。"""
+    from mmi.core import summarizer
+    assert summarizer.FULL_REBUILD_EVERY == 100
+
+
+def test_build_summary_input_incremental_differs():
+    """incremental=True 与 False 产生不同 prompt。"""
+    from mmi.core import summarizer
+    old = "old summary"
+    body = "**User:** new turn\n**Assistant:** reply"
+    zh_inc = summarizer._build_summary_input(old, body, language="zh-CN", incremental=True)
+    zh_full = summarizer._build_summary_input(old, body, language="zh-CN", incremental=False)
+    assert "新增对话" in zh_inc
+    assert "对话全文" in zh_full
+    assert zh_inc != zh_full
+
+
+# ---------------------------------------------------------------------------
+# Round 改进 Round 3: P2-9 简化版热度
+# ---------------------------------------------------------------------------
+
+
+def test_compute_heat_content_bonus_scales_with_turns():
+    """P2-9:total_turns 越多 heat 越高(加法,不是乘法)。"""
+    from mmi.core import heat
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    base_args = {
+        "access_count": 1,
+        "last_access": now,
+        "created_at": now,
+        "now": now,
+    }
+    h0 = heat.compute_heat(**base_args, total_turns=0)
+    h25 = heat.compute_heat(**base_args, total_turns=25)
+    h50 = heat.compute_heat(**base_args, total_turns=50)
+    h100 = heat.compute_heat(**base_args, total_turns=100)
+    # 50 轮封顶 +2
+    assert h25 > h0
+    assert h50 > h25
+    assert h100 == h50  # 封顶
+
+
+def test_compute_heat_content_bonus_does_not_break_state():
+    """P2-9:加法不会让 0 turn 的 heat 变成 0(否则 state 推导会乱)。"""
+    from mmi.core import heat
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+    h = heat.compute_heat(
+        access_count=1, last_access=now, created_at=now,
+        now=now, total_turns=0,
+    )
+    # 应该 ≈ access_count*1.0 + recency_bonus - age_penalty + 0(无 content 加成)
+    assert h > 0    # 短会话仍是 active(高访问+新)
