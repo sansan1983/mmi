@@ -76,17 +76,25 @@ class LoaderConfig:
 
 @dataclass
 class LoadedContext:
-    """build_context 的中间结果（供测试 / debug 用）。"""
+    """build_context 的中间结果(供测试 / debug 用)。
+
+    P1-4 改进后新增 `sections` 字段(结构化消息,按 system/hits/recent/user 分区)。
+    截断按 section 独立删,优先级:summary (system) > hits > recent。
+    `messages` 仍为 LLM 用的扁平列表(向后兼容)。
+    """
 
     summary: str
     recent_turns: list[dict] = field(default_factory=list)
     hit_turns: list[dict] = field(default_factory=list)
     recalled_memories: list = field(default_factory=list)   # MemoryRecord 列表
     messages: list[dict] = field(default_factory=list)
+    sections: dict[str, list[dict]] = field(default_factory=lambda: {
+        "system": [], "hits": [], "recent": [], "user": [],
+    })
     total_chars: int = 0
     estimated_tokens: int = 0
     truncated: bool = False
-    truncated_what: str = ""  # "hits" | "recent" | ""（空 = 没截断）
+    truncated_what: str = ""  # "hits" | "recent" | ""(空 = 没截断)
 
 
 # ---------------------------------------------------------------------------
@@ -106,8 +114,8 @@ def build_context(
     Args:
         session_id: 目标会话
         user_input: 当前用户输入
-        config: context 配置（默认走 LoaderConfig()）
-        language: 输出语言（影响 system prompt 和搜索分词）
+        config: context 配置(默认走 LoaderConfig())
+        language: 输出语言(影响 system prompt 和搜索分词)
 
     Returns:
         OpenAI 格式 messages 列表
@@ -116,11 +124,13 @@ def build_context(
         config = LoaderConfig()
 
     ctx = _load_intermediate(session_id, user_input, config, language=language)
-    messages = compose_messages(ctx, user_input, config, language=language)
+    sections = compose_sections(ctx, user_input, config, language=language)
+    messages = flatten_sections(sections)
 
-    # 截断检查
     if estimate_tokens(messages) > config.max_tokens:
-        messages, truncated_what = _truncate(messages, config)
+        sections, truncated_what = _truncate_by_section(sections, config)
+        messages = flatten_sections(sections)
+        ctx.sections = sections
         ctx.messages = messages
         ctx.truncated = True
         ctx.truncated_what = truncated_what
@@ -137,18 +147,21 @@ def build_context_detailed(
     *,
     language: str = "zh-CN",
 ) -> LoadedContext:
-    """build_context 的详细版，返回 LoadedContext 供测试 / debug。"""
+    """build_context 的详细版,返回 LoadedContext 供测试 / debug。"""
     if config is None:
         config = LoaderConfig()
 
     ctx = _load_intermediate(session_id, user_input, config, language=language)
-    messages = compose_messages(ctx, user_input, config, language=language)
+    sections = compose_sections(ctx, user_input, config, language=language)
+    messages = flatten_sections(sections)
 
     if estimate_tokens(messages) > config.max_tokens:
-        messages, truncated_what = _truncate(messages, config)
+        sections, truncated_what = _truncate_by_section(sections, config)
+        messages = flatten_sections(sections)
         ctx.truncated = True
         ctx.truncated_what = truncated_what
 
+    ctx.sections = sections
     ctx.messages = messages
     ctx.estimated_tokens = estimate_tokens(messages)
     ctx.total_chars = sum(len(m["content"]) for m in messages)
@@ -184,12 +197,14 @@ def _load_intermediate(
         session = None
     all_turns = storage.parse_turns(session.body) if session else []
     if all_turns:
-        # 3) 最近 N 轮（1 轮 = user + assistant 两条，按 pair 切）
-        n_recent_pairs = max(0, config.recent_turns)
+        # 3) 最近 N 轮(P1-5 动态窗口)
+        n_recent_pairs = _compute_recent_window(
+            all_turns, config, user_input=user_input, language=language,
+        )
         recent_pairs = _take_last_pairs(all_turns, n_recent_pairs)
         ctx.recent_turns = recent_pairs
 
-        # 4) 关键词命中（排除最近 N 轮 + 当前 user input 自身）
+        # 4) 关键词命中(排除最近 N 轮 + 当前 user input 自身)
         older = all_turns[: max(0, len(all_turns) - len(recent_pairs))]
         if older and user_input and config.hit_paragraphs > 0:
             ctx.hit_turns = search.search_top_k(
@@ -205,6 +220,60 @@ def _load_intermediate(
             ctx.recalled_memories = []
 
     return ctx
+
+
+def _compute_recent_window(
+    all_turns: list[dict],
+    config: LoaderConfig,
+    *,
+    user_input: str = "",
+    language: str = "zh-CN",
+) -> int:
+    """P1-5 动态最近轮窗口。
+
+    根据 token 余量动态调 recent_turns:
+      remaining = budget - summary - hits - user
+      recent = clamp(remaining / avg_pair_tokens, MIN, MAX)
+
+    - MIN_RECENT_PAIRS = 5(再少就失语境)
+    - MAX_RECENT_PAIRS = DEFAULT_RECENT_TURNS * 2 = 20(防止吃满 token)
+    - 短对话/没 hits → 窗口可扩到 MAX
+    - 长对话/hits 多 → 窗口缩到 MIN
+
+    无 hits 召回时(pure recent)也会算一遍(简化为 0 hits)
+
+    依赖 P0-3(精确 token 估算)才能给准确 budget。
+    """
+    DEFAULT_MIN = 5
+    DEFAULT_MAX = max(10, config.recent_turns * 2)
+
+    # 先估算 system + user token(强制必留)
+    system_msg = {"role": "system", "content": config.system_prompt_zh if language.startswith("zh") else config.system_prompt_en}
+    user_msg = {"role": "user", "content": user_input}
+    overhead = estimate_tokens([system_msg, user_msg])
+
+    budget = config.max_tokens - overhead
+    if budget <= 0:
+        return DEFAULT_MIN  # 极端,至少给 5
+
+    # 算平均每对 token(user + assistant = 2 turn)
+    # 抽样最近几对:取最近 5 对(若有)的平均
+    sample_pairs = min(5, len(all_turns) // 2)
+    if sample_pairs > 0:
+        sample = all_turns[-(sample_pairs * 2):]
+        sample_text = "\n".join((t.get("content") or "") for t in sample)
+        # 样本 total token / 样本对数
+        sample_tokens = estimate_tokens([{"role": "user", "content": sample_text}])
+        avg_pair_tokens = max(50, sample_tokens // sample_pairs)  # 兜底 50 token / 对
+    else:
+        avg_pair_tokens = 200  # 启发式默认 200 token / 对
+
+    # 预算还可放多少对(给 hits 也留点)
+    hits_reserve = min(config.hit_paragraphs * 2, budget // 4)
+    pairs_budget = max(0, (budget - hits_reserve) // avg_pair_tokens)
+
+    n = max(DEFAULT_MIN, min(DEFAULT_MAX, pairs_budget))
+    return n
 
 
 def _take_last_pairs(turns: list[dict], n_pairs: int) -> list[dict]:
@@ -246,33 +315,36 @@ def _take_last_pairs(turns: list[dict], n_pairs: int) -> list[dict]:
     return out
 
 
-def compose_messages(
+def compose_sections(
     ctx: LoadedContext,
     user_input: str,
     config: LoaderConfig,
     *,
     language: str,
-) -> list[dict]:
-    """把 LoadedContext 拼成 OpenAI messages。
+) -> dict[str, list[dict]]:
+    """把 LoadedContext 拼成结构化 messages(P1-4 改进)。
 
-    顺序：system(with summary) → hits → recent → current user
-    hits 和 recent 可能重叠，做内容去重。
+    返回 {system, hits, recent, user} 四区,每区 list[dict]。
+    截断按 section 独立删(优先级 system > hits > recent),详见 _truncate_by_section。
     """
-    # 1) system
+    sections: dict[str, list[dict]] = {
+        "system": [], "hits": [], "recent": [], "user": [],
+    }
+
+    # 1) system(带 summary + 跨会话记忆)
     if language.startswith("zh"):
         system = config.system_prompt_zh
     else:
         system = config.system_prompt_en
     if ctx.summary:
         if language.startswith("zh"):
-            system = f"{system}\n\n会话摘要：{ctx.summary}"
+            system = f"{system}\n\n会话摘要:{ctx.summary}"
         else:
             system = f"{system}\n\nSession summary: {ctx.summary}"
 
-    # 1.5) 跨会话记忆（Recall 段）
     if ctx.recalled_memories:
         if language.startswith("zh"):
-            mem_lines = ["相关历史记忆："]
+            mem_lines = ["相关历史记忆:"]
             for m in ctx.recalled_memories:
                 title = m.title or "(无标题)"
                 snippet = m.conclusion or m.raw_excerpt or ""
@@ -286,25 +358,58 @@ def compose_messages(
                 mem_lines.append(f"- [{title}] {snippet[:120]}")
             system = system + "\n\n" + "\n".join(mem_lines)
 
-    messages: list[dict] = [{"role": "system", "content": system}]
+    sections["system"].append({"role": "system", "content": system})
 
-    # 2) hits + recent 去重拼接
-    seen_keys: set[str] = set()
-    for src in (ctx.hit_turns, ctx.recent_turns):
-        for turn in src:
-            content = turn.get("content") or ""
-            if not content:
-                continue
-            key = content[:200]  # 截前 200 字符做指纹
-            if key in seen_keys:
-                continue
-            seen_keys.add(key)
-            messages.append({"role": turn["role"], "content": content})
+    # 2) hits(优先 recent:按相关性命中段)
+    for turn in ctx.hit_turns:
+        content = turn.get("content") or ""
+        if content:
+            sections["hits"].append({"role": turn["role"], "content": content})
 
-    # 3) current user
-    messages.append({"role": "user", "content": user_input})
+    # 3) recent(hits 之外的最近 N 轮,按内容指纹去重)
+    seen_keys = {h["content"][:200] for h in sections["hits"]}
+    for turn in ctx.recent_turns:
+        content = turn.get("content") or ""
+        if not content:
+            continue
+        key = content[:200]
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        sections["recent"].append({"role": turn["role"], "content": content})
 
-    return messages
+    # 4) user
+    sections["user"].append({"role": "user", "content": user_input})
+
+    return sections
+
+
+def flatten_sections(sections: dict[str, list[dict]]) -> list[dict]:
+    """把 sections 拼回 LLM 用的扁平 messages 列表。
+
+    顺序:system → hits → recent → user(向后兼容老 API)。
+    """
+    return (
+        list(sections["system"])
+        + list(sections["hits"])
+        + list(sections["recent"])
+        + list(sections["user"])
+    )
+
+
+# 向后兼容:旧名字 compose_messages 仍可用(返扁平 list)
+def compose_messages(
+    ctx: LoadedContext,
+    user_input: str,
+    config: LoaderConfig,
+    *,
+    language: str,
+) -> list[dict]:
+    """DEPRECATED:用 compose_sections + flatten_sections。保留此函数
+    是为了不破坏外部直接 import 的代码(测试 / 第三方)。"""
+    return flatten_sections(
+        compose_sections(ctx, user_input, config, language=language)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -340,61 +445,68 @@ def estimate_tokens(messages: list[dict]) -> int:
     return total
 
 
+def _truncate_by_section(
+    sections: dict[str, list[dict]],
+    config: LoaderConfig,
+) -> tuple[dict[str, list[dict]], str]:
+    """按"summary > hits > recent"优先级截断(P1-4 改进)。
+
+    必留:system(1 条)+ user(1 条)
+    可删顺序:recent → hits(system + user 永不删)
+    每轮删最早的一条,直到总 token ≤ budget。
+
+    与旧实现的区别:
+      - 旧:_truncate(messages, ...) 把 system / hits / recent 合成一坨,
+        不知道哪条是 hits,实际只能从前往后删(违反了"先 recent 再 hits"的设计)
+      - 新:按 section 独立删,精确遵守"recent 优先"原则
+    """
+    system_msgs = sections["system"]
+    user_msgs = sections["user"]
+    # 强制至少留 1 条 user(否则 LLM 不知道 query 是啥)
+    if not system_msgs or not user_msgs:
+        return sections, ""
+
+    # 当前 token 用量
+    cur_total = estimate_tokens(flatten_sections(sections))
+    if cur_total <= config.max_tokens:
+        return sections, ""
+
+    truncated_what = ""
+    # 先删 recent
+    while sections["recent"] and cur_total > config.max_tokens:
+        sections["recent"].pop(0)
+        truncated_what = "recent" if not truncated_what else truncated_what
+        cur_total = estimate_tokens(flatten_sections(sections))
+
+    # 再删 hits(recent 删完仍超)
+    while sections["hits"] and cur_total > config.max_tokens:
+        sections["hits"].pop(0)
+        truncated_what = "hits"
+        cur_total = estimate_tokens(flatten_sections(sections))
+
+    # 极端:连 system + user 都超 —— 强制保留,不截断
+    return sections, truncated_what
+
+
+# 向后兼容:旧的 _truncate 函数(对老测试 / 第三方 import 保留)
 def _truncate(
     messages: list[dict],
     config: LoaderConfig,
 ) -> tuple[list[dict], str]:
-    """按"摘要 > 命中段 > 最近轮"优先级截断。
-
-    必留：system（带 summary）+ 最后一条 user（current）
-    可删：hits（先删）→ recent（从最早的开始删）
-
-    Returns:
-        (新 messages, 被截断的部分 "hits"|"recent"|"")
-    """
+    """DEPRECATED:用 _truncate_by_section。保留此函数是过渡期兼容。"""
+    # 假设 messages 形如 [system, *middle, user]
     if len(messages) < 2:
         return messages, ""
-
-    # 找到 system 和最后 user 的位置
     system_msg = messages[0]
-    current_user = messages[-1]
-    if current_user.get("role") != "user":
-        # 异常：最后不是 user，直接不动
+    user_msg = messages[-1]
+    if user_msg.get("role") != "user":
         return messages, ""
-
-    middle = messages[1:-1]
-    if not middle:
-        return messages, ""
-
-    # 切 hits vs recent：hits 在前，recent 在后
-    # 我们没法直接区分（顺序在 compose_messages 里已经混在一起了）
-    # 简化策略：先按"前半可删、后半优先"删
-    # 实际：把 messages 切成 [system, A, B, C, current_user]，
-    #       A B C 都是 middle，从 A 开始尝试删
-
-    # 重新算 budget
-    overhead = estimate_tokens([system_msg, current_user])
-    budget = config.max_tokens - overhead
-    if budget <= 0:
-        # 极端情况：连 system + current 都超 —— 强制保留
-        return [system_msg, current_user], "recent"
-
-    # 倒着累加 middle（保留最新的）直到超 budget
-    kept_reverse: list[dict] = []
-    used = 0
-    for m in reversed(middle):
-        t = estimate_tokens([m])
-        if used + t > budget:
-            break
-        kept_reverse.append(m)
-        used += t
-
-    kept = list(reversed(kept_reverse))
-    if len(kept) < len(middle):
-        truncated_what = "recent" if kept and any(
-            m.get("role") in ("user", "assistant") for m in middle[len(kept):]
-        ) else "recent"
-    else:
-        truncated_what = ""
-
-    return [system_msg, *kept, current_user], truncated_what
+    # 全部归到 recent section
+    fake_sections = {
+        "system": [system_msg],
+        "hits": [],
+        "recent": list(messages[1:-1]),
+        "user": [user_msg],
+    }
+    new_sections, what = _truncate_by_section(fake_sections, config)
+    return flatten_sections(new_sections), what

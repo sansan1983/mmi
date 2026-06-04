@@ -37,11 +37,39 @@ def test_tokenize_en_filters_stopwords():
     assert "world" in toks
 
 
-def test_tokenize_zh_uses_bigrams():
+def test_tokenize_zh_uses_jieba_or_bigrams():
     toks = search.tokenize("我在写一个 Python 爬虫", language="zh-CN")
-    # 2-gram 形式
-    assert "爬虫" in toks
-    # 停用字不会单独出现（被过滤）；但 "我在" 2-gram 可能保留
+    # 装了 jieba 应该是 jieba 切词(可能含"爬虫"作为整体)
+    # 降级(2-gram)应该含 "爬虫"
+    if search._HAS_JIEBA:
+        # jieba 切词后 "爬虫" 应作为单 token 出现
+        assert "爬虫" in toks
+    else:
+        # 2-gram 模式
+        assert "爬虫" in toks
+    # 停用字不会单独出现(被过滤);在 jieba 模式下长度可能为 1
+    if not search._HAS_JIEBA:
+        assert all(len(t) >= 2 for t in toks)
+
+
+def test_tokenize_zh_filters_stopwords():
+    """停用词(我/的/了)不出现。"""
+    toks = search.tokenize("我的项目方案", language="zh-CN")
+    # 停用字"我"和"的"不应出现
+    assert "我" not in toks
+    assert "的" not in toks
+    # 内容词"项目"应出现
+    assert "项目" in toks or "项" in toks
+
+
+def test_tokenize_zh_no_jieba_falls_back_to_bigrams(monkeypatch):
+    """模拟 jieba 不可用 → 2-gram fallback 仍能用。"""
+    monkeypatch.setattr(search, "_HAS_JIEBA", False)
+    toks = search.tokenize("分表策略", language="zh-CN")
+    # 2-gram 模式:chars < 2 时直接返 chars;>= 2 时 2-gram
+    assert "分表" in toks
+    assert "表策" in toks
+    # 所有 token 长度 >= 2
     assert all(len(t) >= 2 for t in toks)
 
 

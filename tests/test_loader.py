@@ -115,21 +115,17 @@ def test_build_context_includes_recent_turns(isolated_home):
     assert "third question" in user_contents
 
 
-def test_build_context_recent_turns_limit(isolated_home):
-    """recent_turns=2 时只取最后 2 轮。"""
+def test_build_context_dynamic_window_clamped_on_small_budget(isolated_home):
+    """P1-5 动态窗口:小 budget → recent 被压住,不超 MAX。"""
     sid = _new_sid()
     _seed_session(sid, [
-        (f"u{i}", f"a{i}") for i in range(10)
+        (f"u{i}", f"a{i}") for i in range(30)
     ])
-    config = loader.LoaderConfig(recent_turns=2, hit_paragraphs=0, max_tokens=100000)
+    config = loader.LoaderConfig(recent_turns=20, hit_paragraphs=0, max_tokens=300)
     messages = loader.build_context(sid, "new", config=config, language="en-US")
-    # system + 2 user + 2 assistant + current user = 6
-    assert len(messages) == 6
-    user_contents = [m["content"] for m in messages if m["role"] == "user"]
-    # 最近 2 轮的 user：u8, u9
-    assert "u8" in user_contents
-    assert "u9" in user_contents
-    assert "u0" not in user_contents
+    # recent 部分应被 budget 压住(300 token 装不下 20 对)
+    user_count = sum(1 for m in messages if m["role"] == "user") - 1
+    assert user_count <= 5, f"recent window 应被 budget 压住,user 出现 {user_count} 次"
 
 
 # ---------------------------------------------------------------------------
