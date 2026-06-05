@@ -214,6 +214,93 @@ class LLMProvider(ABC):
                     raise
         raise LLMRetryExhausted(attempts=max_attempts, last_error=last_error)
 
+    # ---- 4.8 流式重试 ----------------------------------------------------
+
+    def stream_chat_with_retry(
+        self,
+        messages: list[dict],
+        *,
+        max_attempts: int = 3,
+        base_delay: float = 0.5,
+    ):
+        """流式重试,语义跟 chat_with_retry 对齐。
+
+        关键设计(stream 的本质约束):
+          - stream_chat 是生成器,每调一次产生新的 stream 实例
+          - 预生成阶段(yield 之前的错误)→ 可重试,且对调用者不可见
+            (caller 还没拿到第一个 chunk,新 stream 整段重发)
+          - 中流错误(已 yield 了部分 chunk 之后)→ 不可重试
+            (caller 已消费了 N 个 chunk,重试会重复,让 UI 看到两段一样的文本)
+
+        实现:用内层生成器 + 状态机。
+          - 第一次失败:如果是 pre-yield(没消费过任何 chunk),重试
+          - 如果已经 yield 过,直接抛(让 StreamError 透传)
+
+        可重试异常(仅 pre-yield 阶段):同 chat_with_retry
+          - httpx.TimeoutException / httpx.ConnectError / ConnectionError
+          - httpx.HTTPStatusError 5xx / 429
+        不可重试:4xx / 其它 LLMError / 中流 StreamError
+
+        Args:
+            messages: 同 stream_chat()
+            max_attempts: 最大尝试次数,默认 3
+            base_delay: 退避基数,attempt=N 的退避是 base_delay * 2^(N-1)
+
+        Yields:
+            文本片段(从成功的某次 stream_chat 转发)
+
+        Raises:
+            LLMRetryExhausted: pre-yield 阶段重试 N 次后仍失败
+            StreamError: 中流错误(已 yield 过部分内容,重试不安全的)
+            httpx.HTTPStatusError: 4xx 直接抛
+        """
+        import httpx
+
+        from mmi.core.exceptions import LLMRetryExhausted
+
+        # 状态:caller 是否已消费过 chunk
+        consumed_count = 0
+        last_error: Exception | None = None
+
+        for attempt in range(1, max_attempts + 1):
+            try:
+                gen = self.stream_chat(messages)
+                for chunk in gen:
+                    consumed_count += 1
+                    yield chunk
+                return  # 整段流式成功
+            except (httpx.TimeoutException, httpx.ConnectError, ConnectionError) as e:
+                last_error = e
+                if consumed_count > 0:
+                    # 中流错误:不可安全重试(已 yield 的 chunk 不可收回)
+                    from mmi.core.exceptions import StreamError
+                    raise StreamError(f"mid-stream error after {consumed_count} chunks: {e}") from e
+                if attempt < max_attempts:
+                    time.sleep(base_delay * (2 ** (attempt - 1)))
+            except httpx.HTTPStatusError as e:
+                status = e.response.status_code
+                if status >= 500 or status == 429:
+                    last_error = e
+                    if consumed_count > 0:
+                        from mmi.core.exceptions import StreamError
+                        raise StreamError(f"mid-stream error after {consumed_count} chunks: {e}") from e
+                    if attempt < max_attempts:
+                        time.sleep(base_delay * (2 ** (attempt - 1)))
+                else:
+                    # 4xx:不可重试
+                    if consumed_count > 0:
+                        from mmi.core.exceptions import StreamError
+                        raise StreamError(f"mid-stream 4xx after {consumed_count} chunks: {e}") from e
+                    raise
+            except Exception as e:
+                # 其它异常(LLMError 等)— 不可重试
+                if consumed_count > 0:
+                    from mmi.core.exceptions import StreamError
+                    raise StreamError(f"mid-stream error after {consumed_count} chunks: {e}") from e
+                raise
+        # pre-yield 阶段耗尽
+        raise LLMRetryExhausted(attempts=max_attempts, last_error=last_error)
+
 
 # ---------------------------------------------------------------------------
 # 向后兼容别名(R7 plan 文档里把类叫 LLM,实际实现是 LLMProvider)

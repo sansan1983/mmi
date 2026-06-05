@@ -70,9 +70,10 @@ class Orchestrator:
         self.router = router or Router()
         self.registry = registry or AgentRegistry.get_instance()
         self.validator = validator or Validator()
-        self.tracer = tracer or Tracer()
-        self.skill_library = skill_library
         self.bus = event_bus or default_bus
+        # R8 4.7:Tracer 注入同一个 bus,record() 时 publish 'trace.recorded' 事件
+        self.tracer = tracer or Tracer(event_bus=self.bus)
+        self.skill_library = skill_library
 
         # R7 4.2:把 llm / skill_library 注入 registry,让 InstantiateStep 能
         # 拿到依赖去构造 BaseAgent 实例(避免重复从 orchestrator 取)。
@@ -88,6 +89,7 @@ class Orchestrator:
                     registry=self.registry,
                     validator=self.validator,
                     manager=self.manager,
+                    event_bus=self.bus,  # R8 4.9:把 bus 透传到 Validate/Persist
                 ),
                 event_bus=self.bus,
             )

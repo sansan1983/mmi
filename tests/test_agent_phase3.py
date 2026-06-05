@@ -12,8 +12,6 @@
 
 from __future__ import annotations
 
-import os
-import tempfile
 import pytest
 
 from mmi.agent.router import IntentType, Router
@@ -277,7 +275,6 @@ def test_mode_prompt_standard_empty_preamble():
 
 def test_code_review_agent_run_with_echo_llm(isolated_home):
     """3.5:CodeReviewAgent 用 stub LLM 调通,捕获密码违规。"""
-    from mmi.core.llm import EchoLLMProvider
     agent = CodeReviewAgent(llm=_StubLLM())
     # 用户的 input 含 "密码" 关键词 → stub 返 password=xxx
     reply = agent.run("密码")

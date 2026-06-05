@@ -221,7 +221,6 @@ def test_chat_increments_access_count(mgr, isolated_home):
 
 
 def test_chat_unknown_session_raises(mgr, isolated_home):
-    from mmi.core.session import new_session_id
     with pytest.raises(storage.SessionNotFound):
         mgr.chat(new_session_id(), "hi")
 
@@ -239,7 +238,6 @@ def test_archive_moves_to_trash(mgr, isolated_home):
 
 
 def test_archive_unknown_raises(mgr, isolated_home):
-    from mmi.core.session import new_session_id
     with pytest.raises(storage.SessionNotFound):
         mgr.archive(new_session_id())
 
@@ -251,7 +249,6 @@ def test_delete_removes_file(mgr, isolated_home):
 
 
 def test_delete_unknown_raises(mgr, isolated_home):
-    from mmi.core.session import new_session_id
     with pytest.raises(storage.SessionNotFound):
         mgr.delete(new_session_id())
 
@@ -287,7 +284,6 @@ def test_trash_moves_to_trash(mgr, isolated_home):
 
 
 def test_trash_unknown_raises(mgr, isolated_home):
-    from mmi.core.session import new_session_id
     with pytest.raises(storage.SessionNotFound):
         mgr.trash(new_session_id())
 
@@ -297,7 +293,6 @@ def test_chat_with_short_chitchat_classifier_trashes(mgr, isolated_home):
 
     所以即使 3 轮短对话也不会被 trashed（echo LLM 默认"yes"）。
     """
-    from mmi.core.session import new_session_id
     from mmi.core.llm import Classification, LLMProvider
 
     class _AlwaysTrashLLM(LLMProvider):
@@ -477,9 +472,15 @@ def test_list_sessions_sorted_by_heat_desc(mgr, isolated_home):
     sid_mid = mgr.create(title="mid")
     sid_low = mgr.create(title="low")
 
-    s1 = mgr.get(sid_high); s1.meta.heat = 25.0; storage.write_session(s1)
-    s2 = mgr.get(sid_mid); s2.meta.heat = 10.0; storage.write_session(s2)
-    s3 = mgr.get(sid_low); s3.meta.heat = 2.0; storage.write_session(s3)
+    s1 = mgr.get(sid_high)
+    s1.meta.heat = 25.0
+    storage.write_session(s1)
+    s2 = mgr.get(sid_mid)
+    s2.meta.heat = 10.0
+    storage.write_session(s2)
+    s3 = mgr.get(sid_low)
+    s3.meta.heat = 2.0
+    storage.write_session(s3)
 
     listed = mgr.list_sessions(limit=10)
     titles = [m.title for m in listed if m.title in ("high", "mid", "low")]

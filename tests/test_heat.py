@@ -329,15 +329,20 @@ class TestApplyHeatAndState:
 
 class TestSortByHeat:
     def test_sort_descending(self):
-        m1 = SessionMeta.new(new_session_id(), title="a"); m1.heat = 1.0
-        m2 = SessionMeta.new(new_session_id(), title="b"); m2.heat = 5.0
-        m3 = SessionMeta.new(new_session_id(), title="c"); m3.heat = 3.0
+        m1 = SessionMeta.new(new_session_id(), title="a")
+        m1.heat = 1.0
+        m2 = SessionMeta.new(new_session_id(), title="b")
+        m2.heat = 5.0
+        m3 = SessionMeta.new(new_session_id(), title="c")
+        m3.heat = 3.0
         result = sort_by_heat([m1, m2, m3])
         assert [m.title for m in result] == ["b", "c", "a"]
 
     def test_sort_ascending(self):
-        m1 = SessionMeta.new(new_session_id(), title="a"); m1.heat = 1.0
-        m2 = SessionMeta.new(new_session_id(), title="b"); m2.heat = 5.0
+        m1 = SessionMeta.new(new_session_id(), title="a")
+        m1.heat = 1.0
+        m2 = SessionMeta.new(new_session_id(), title="b")
+        m2.heat = 5.0
         result = sort_by_heat([m1, m2], descending=False)
         assert [m.title for m in result] == ["a", "b"]
 

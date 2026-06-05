@@ -351,6 +351,15 @@ def batch_chat(self, items: list[tuple[str, str]]) -> list["ChatResult"]:
 
 预计 R8 净工时:~6h(每项 1-1.5h)。
 
+> **R8 已全部完成**(2026-06-05,见 [round_8_phase4_fb.md](round_8_phase4_fb.md)):
+> - 4.7 ✅ Tracer→EventBus 完成
+> - 4.8 ✅ stream_chat_with_retry 完成(pre-yield 可重试 / mid-stream 转 StreamError)
+> - 4.9 ✅ Validate/Persist 拆 hook 完成(走 EventBus publish 3 个事件)
+> - 4.10 ✅ ValidationIssue 4 字段 + frozen=True 完成
+> - 跨期 #7 chat_legacy 评估 — 决议保留
+> - 跨期 #8 tests/_fakes.py 抽公共 + ruff 跨期清 0
+> - 539/539 passed,ruff 0
+
 ---
 
 ## 8. R8 排除项(用户决议,2026-06-05)

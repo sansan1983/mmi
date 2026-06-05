@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-import pytest
 
 from mmi.agent.result import ChatResult
 from mmi.agent.router import IntentType

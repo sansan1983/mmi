@@ -1,6 +1,6 @@
 """ChatResult 数据契约测试。"""
 from mmi.agent.result import ChatResult
-from mmi.agent.validate import ValidationResult, ValidationIssue
+from mmi.agent.validate import ValidationResult
 from mmi.agent.router import IntentType
 
 

@@ -271,7 +271,7 @@ def test_schedule_summary_update_swallows_exceptions(isolated_home):
     from tests.conftest import ScriptedLLM
 
     mgr = mgr_module.SessionManager(llm=ScriptedLLM())
-    sid = mgr.create()
+    mgr.create()
     # 不存在的 session_id → update_summary 会 catch SessionNotFound 返 False
     # 但 schedule 不应抛任何异常
     t = summarizer.schedule_summary_update("not-a-real-ulid-xxxxxxxxxx", ScriptedLLM())

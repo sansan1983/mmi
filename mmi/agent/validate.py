@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from mmi.agent.router import IntentType
@@ -28,6 +28,11 @@ class ValidationRule:
     """3.4 改进:Reject if output is shorter than this length."""
 
     min_length_error: str = "output too short (looks like empty/noise reply)"
+
+    severity: Literal["error", "warning"] = "error"
+    """4.10 引入:rule 默认严重级。error 阻断 passed,warning 只记不阻断。
+    (注:当前版本 passed 只看 issues 是否为空,severity 仍参与 passed 计算路径
+    留到 R8 4.9 评估;但 ValidationIssue 字段先有,后续可挂。)"""
 
 
 class Validator:
@@ -94,45 +99,80 @@ class Validator:
 
         3.4 改进:每条 rule 跑完把失败原因加进 issues(之前没 min_length 检查)。
         4.3 改进:issues 是 ValidationIssue tuple(占位,只含 message)。
+        4.10 改进:ValidationIssue 扩到 4 字段 — message / severity / rule_id / span;
+        每条 issue 携带触发它的 rule 名(便于审计 / 聚合统计)与命中区间(便于 UI 高亮)。
         """
-        messages: list[str] = []
+        issues: list[ValidationIssue] = []
         for rule in self._rules:
             # Length check (max)
             if rule.max_length is not None and len(text) > rule.max_length:
-                messages.append(f"[{rule.name}] Output exceeds max length {rule.max_length}")
+                issues.append(ValidationIssue(
+                    message=f"[{rule.name}] Output exceeds max length {rule.max_length}",
+                    severity=rule.severity,
+                    rule_id=rule.name,
+                    span=(0, min(len(text), rule.max_length)),
+                ))
 
             # Length check (min) — 3.4 新增
             if rule.min_length is not None and len(text.strip()) < rule.min_length:
-                messages.append(
-                    f"[{rule.name}] {rule.min_length_error} (got {len(text.strip())} chars)"
-                )
+                issues.append(ValidationIssue(
+                    message=f"[{rule.name}] {rule.min_length_error} (got {len(text.strip())} chars)",
+                    severity=rule.severity,
+                    rule_id=rule.name,
+                    span=(0, len(text)),
+                ))
 
             # Required substrings
             for sub in rule.required_substrings:
                 if sub not in text:
-                    messages.append(f"[{rule.name}] Missing required substring: {sub!r}")
+                    issues.append(ValidationIssue(
+                        message=f"[{rule.name}] Missing required substring: {sub!r}",
+                        severity=rule.severity,
+                        rule_id=rule.name,
+                        span=None,
+                    ))
 
             # Negative regex
-            if rule.pattern is not None and re.search(rule.pattern, text):
-                messages.append(f"[{rule.name}] Output matches prohibited pattern: {rule.pattern!r}")
+            if rule.pattern is not None:
+                for m in re.finditer(rule.pattern, text):
+                    issues.append(ValidationIssue(
+                        message=f"[{rule.name}] Output matches prohibited pattern: {rule.pattern!r}",
+                        severity=rule.severity,
+                        rule_id=rule.name,
+                        span=(m.start(), m.end()),
+                    ))
 
-        issues = tuple(ValidationIssue(message=m) for m in messages)
-        return ValidationResult(passed=len(issues) == 0, issues=issues)
+        return ValidationResult(passed=len(issues) == 0, issues=tuple(issues))
 
     def _llm_deep_audit(self, text: str, intent: IntentType) -> ValidationResult:
         """Call LLM for nuanced safety / quality audit."""
         raise NotImplementedError("LLM deep audit not yet integrated")
 
 
-@dataclass
-class ValidationIssue:
-    """Single structured validation issue (R7 4.3 引入,本任务占位)。
+# ---------------------------------------------------------------------------
+# ValidationIssue / ValidationResult
+# 4.10:ValidationIssue 扩到 4 字段(message / severity / rule_id / span)
+# 字段含义:
+#   - message: 人类可读描述(给 UI / 日志看)
+#   - severity: "error"(阻断 passed)或 "warning"(只记,后续可挂 passed 策略)
+#   - rule_id: 触发本 issue 的 rule 名(聚合统计 / 审计 / 决定是否记 EventBus)
+#   - span: (start, end) 字符 offset 区间,UI 可用做高亮
+# 注:field 顺序固定;asdict / JSON 序列化按本顺序展开(向后兼容,旧测试只读 .message)
+# ---------------------------------------------------------------------------
 
-    R8 4.10 会扩展为带 severity/category/offset 等字段。当前是 placeholder,
-    ChatResult.to_dict() 通过 asdict 序列化时按本类的字段展开。
+
+@dataclass(frozen=True)
+class ValidationIssue:
+    """Single structured validation issue.
+
+    R7 4.3 引入(占位,只含 message)。
+    R8 4.10 扩展为 4 字段 — frozen=True 保证不可变,便于放进 tuple / EventBus payload。
     """
 
     message: str = ""
+    severity: Literal["error", "warning"] = "error"
+    rule_id: str = ""
+    span: tuple[int, int] | None = None
 
 
 @dataclass
