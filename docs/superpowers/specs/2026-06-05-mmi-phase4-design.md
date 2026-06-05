@@ -292,8 +292,8 @@ def batch_get_meta(self, session_ids: list[str]) -> dict[str, SessionMeta]:
 
 ### 测试
 - 3 条正常 + 1 条异常 → 3 条正常返 ChatResult,1 条异常隔离(可考虑返 `ChatResult(reply="", error=...)`)
-- `batch_touch` 单条失败不阻塞其它
-- `batch_get_meta` 不存在的 sid 抛 KeyError 或跳过得约定
+- `batch_touch` 单条失败不阻塞其它(整批只 log,不抛)
+- `batch_get_meta` 不存在的 sid → 跳过,`dict` 不含该 key(不抛 KeyError);调用方查 key 是否在返 dict 里即可
 
 ---
 
@@ -421,7 +421,7 @@ class ValidationResult:
 
 字段迁移:`ValidationResult(passed, reasons)` → `ValidationResult(passed, issues)`;`reasons` 留 `property` 兼容(标记 deprecated)。
 
-**顺手补 2 条规则**(deep analysis 2.8 F2 提的):
+**顺手补 2 条规则**(deep analysis 2.8 F2 提的):补完后内建规则共 6 条。
 - `no_pii`:检测 reply 是否包含邮箱/手机号/身份证(简单正则)
 - `max_length`:reply > 10000 字符 → warn(避免撑爆 LLM 上文)
 
