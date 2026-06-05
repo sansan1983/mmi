@@ -1,13 +1,20 @@
-"""Pipeline 内建 Step 实现。"""
+"""Pipeline 内建 Step 实现。
+
+R8 4.9 改进:ValidateStep / PersistStep 支持 event_bus 注入(可选),
+完成后 publish 'validation.complete' / 'persist.complete' 事件,
+供审计 / 指标 / 外部监控订阅。
+"""
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from mmi.agent.pipeline import PipelineCtx, PipelineStep
 
 if TYPE_CHECKING:
+    from mmi.agent.event_bus import EventBus
     from mmi.agent.router import Router
     from mmi.agent.validate import Validator
     from mmi.core.manager import SessionManager
@@ -81,12 +88,37 @@ class ValidateStep(PipelineStep):
     name: str = "validate"
     on_error: str = "degrade"
     validator: "Validator | None" = None
+    event_bus: "EventBus | None" = None  # R8 4.9 引入:可注入
 
     def run(self, ctx: PipelineCtx) -> PipelineCtx:
         if self.validator is None:
             raise RuntimeError("ValidateStep.validator not set")
         reply = ctx.reply or ""
         ctx.validation = self.validator.check(reply, ctx.intent)
+        # R8 4.9:完成后 publish 'validation.complete' + 每条 issue 单独 publish
+        if self.event_bus is not None:
+            from mmi.agent.event_bus import Event
+            self.event_bus.publish(Event(
+                name="validation.complete",
+                timestamp=time.time(),
+                payload={
+                    "session_id": ctx.session_id,
+                    "passed": ctx.validation.passed,
+                    "issue_count": len(ctx.validation.issues),
+                },
+            ))
+            for issue in ctx.validation.issues:
+                self.event_bus.publish(Event(
+                    name="validation.issue",
+                    timestamp=time.time(),
+                    payload={
+                        "session_id": ctx.session_id,
+                        "rule_id": issue.rule_id,
+                        "severity": issue.severity,
+                        "message": issue.message,
+                        "span": list(issue.span) if issue.span is not None else None,
+                    },
+                ))
         return ctx
 
 
@@ -95,6 +127,7 @@ class PersistStep(PipelineStep):
     name: str = "persist"
     on_error: str = "degrade"
     manager: "SessionManager | None" = None
+    event_bus: "EventBus | None" = None  # R8 4.9 引入:可注入
 
     def run(self, ctx: PipelineCtx) -> PipelineCtx:
         if self.manager is None:
@@ -104,6 +137,18 @@ class PersistStep(PipelineStep):
             user_input=ctx.user_message,
             reply=ctx.reply or "",
         )
+        # R8 4.9:完成后 publish 'persist.complete' 事件(供审计 / 外部监控)
+        if self.event_bus is not None:
+            from mmi.agent.event_bus import Event
+            self.event_bus.publish(Event(
+                name="persist.complete",
+                timestamp=time.time(),
+                payload={
+                    "session_id": ctx.session_id,
+                    "agent_id": ctx.agent_id or "",
+                    "reply_length": len(ctx.reply or ""),
+                },
+            ))
         return ctx
 
 
@@ -113,13 +158,18 @@ def default_steps(
     registry: object,
     validator: "Validator",
     manager: "SessionManager",
+    event_bus: "EventBus | None" = None,  # R8 4.9 引入
 ) -> list[PipelineStep]:
-    """返回 6 个内建 Step 的默认装配。"""
+    """返回 6 个内建 Step 的默认装配。
+
+    R8 4.9 改进:event_bus 注入到 ValidateStep / PersistStep(向后兼容,
+    None 时不发事件)。
+    """
     return [
         ClassifyStep(router=router),
         RouteStep(router=router),
         InstantiateStep(registry=registry),
         RunStep(),
-        ValidateStep(validator=validator),
-        PersistStep(manager=manager),
+        ValidateStep(validator=validator, event_bus=event_bus),
+        PersistStep(manager=manager, event_bus=event_bus),
     ]
