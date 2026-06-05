@@ -8,8 +8,8 @@ Phase 2 范围：
   - get_default_provider()：从环境变量自动选择
 
 Phase 5 范围（新增）：
-  - stream_chat()：async generator，逐步 yield 文本片段
-  - 默认实现抛 NotImplementedError，调用方降级到 chat() 整段
+  - stream_chat()：同步生成器，逐步 yield 文本片段
+  - 默认实现走 chat() 拆成单 chunk（兜底）
   - EchoLLMProvider / OpenAILLMProvider 各自实现
 
 设计原则：
@@ -36,7 +36,7 @@ import os
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from mmi.agent.result import ChatResult
@@ -125,41 +125,32 @@ class LLMProvider(ABC):
             LLMError: 底层错误
         """
 
-    # ---- 流式（Phase 5 新增） --------------------------------------------
+    # ---- 流式（4.4 新增） --------------------------------------------
 
-    async def stream_chat(
-        self,
-        messages: list[dict],
-        *,
-        max_tokens: int = 512,
-        temperature: float = 0.7,
-    ) -> AsyncIterator[str]:
-        """流式对话：逐步 yield 文本片段。
+    def stream_chat(self, messages: list[dict]):
+        """默认实现:走 chat,拆成单 chunk。子类可 override 走真流式。
 
-        设计要点（ARCHITECTURE.md §3.5.3）：
-          - 不是 abstractmethod：默认实现抛 NotImplementedError，老 provider
-            子类（测试用 Mock）不会被强制实现
-          - 调用方（manager / tui）应 try/except NotImplementedError 降级到 chat() 整段
-          - 走 async generator 而非 callback：跟 textual worker / asyncio.to_thread 配合更好
+        设计要点(spec 4.4):
+          - 同步迭代器起步(不抽 async def):本仓 SDK 同步(httpx + OpenAI 兼容),
+            强行 async 收益小、改动面大
+          - 不是 abstractmethod:子类可不实现,默认实现直接走 chat() 整段
+          - 真流式 Provider(OpenAI)可 override 走 stream=True
 
         Args:
-            messages: OpenAI 格式
-            max_tokens: 同 chat
-            temperature: 同 chat
+            messages: OpenAI 格式 [{"role": ..., "content": ...}, ...]
 
         Yields:
-            文本片段（不保证按 token 边界，调用方应原样拼接）
+            文本片段(单 chunk,默认实现就是整段)
 
         Raises:
-            NotImplementedError: provider 不支持流式（调用方应降级到 chat()）
-            LLMError: 底层错误
+            StreamError: chat() 失败时包成 StreamError
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not support stream_chat; "
-            "fallback to chat() is recommended"
-        )
-        # 让类型检查器满意（async generator 必须有 yield）
-        yield ""  # pragma: no cover
+        from mmi.core.exceptions import StreamError
+        try:
+            text = self.chat(messages)
+        except Exception as e:
+            raise StreamError(str(e)) from e
+        yield text
 
     # ---- 4.3 重试 ---------------------------------------------------------
 
@@ -273,14 +264,10 @@ class EchoLLMProvider(LLMProvider):
             raw=f"echo:{options[0]}",
         )
 
-    async def stream_chat(self, messages, *, max_tokens=512, temperature=0.7):
-        """Echo 流式：一次 yield 完整 echo 回复。
-
-        Phase 5：测试和默认 fallback 都需要"能流"的 provider。
-        一次 yield 整段，便于 TUI 端用同一条 stream_chat 路径走完。
-        """
-        full = self.chat(messages, max_tokens=max_tokens, temperature=temperature)
-        yield full
+    def stream_chat(self, messages, *, max_tokens=512, temperature=0.7):
+        """Echo 流式:走默认实现即可(单 chunk 整段)。"""
+        # 走基类默认实现(走 chat + 单 chunk),保持 echo 行为一致
+        yield from super().stream_chat(messages)
 
 
 # ---------------------------------------------------------------------------
@@ -344,66 +331,34 @@ class OpenAILLMProvider(LLMProvider):
             raise LLMError("OpenAI chat: empty content")
         return content
 
-    async def stream_chat(self, messages, *, max_tokens=512, temperature=0.7):
-        """OpenAI 同步流式生成器包成 async generator。
+    def stream_chat(self, messages, *, max_tokens=512, temperature=0.7):
+        """OpenAI 真流式:同步迭代 stream=True 返回的 chunk。
 
-        OpenAI SDK 的 stream=True 返回同步 `Stream[ChatCompletionChunk]`
-        （blocks 当前线程）。我们在另一线程同步迭代，异步 yield 增量文本。
+        OpenAI SDK 的 stream=True 返回同步 `Stream[ChatCompletionChunk]`,
+        直接同步迭代 yield 增量文本即可(调用方负责放到后台线程)。
 
-        实现技巧（避免 run_in_executor 死锁）：
-          - OpenAI stream 在专属后台线程里同步迭代
-          - 用 queue.Queue 在两线程间传 chunk
-          - async generator 从 queue 异步取
+        设计要点(spec 4.4):
+          - 同步迭代器:不阻塞 — OpenAI SDK 的 stream 内部异步发请求
+          - LLMError 包成 StreamError:与默认实现行为一致
         """
-        import asyncio
-        import queue
-        import threading
-
-        q: queue.Queue = queue.Queue()
-        done = threading.Event()
-        error: list = []
-
-        def _produce():
-            try:
-                stream = self.client.chat.completions.create(
-                    model=self.model,
-                    messages=messages,
-                    max_tokens=max_tokens,
-                    temperature=temperature,
-                    stream=True,
-                )
-                for chunk in stream:
-                    if not chunk.choices:
-                        continue
-                    delta = chunk.choices[0].delta
-                    content = getattr(delta, "content", None) if delta else None
-                    if content:
-                        q.put(content)
-            except Exception as e:
-                error.append(LLMError(f"OpenAI stream failed: {e}"))
-            finally:
-                done.set()
-
-        t = threading.Thread(target=_produce, daemon=True)
-        t.start()
-
-        while True:
-            # 给 producer 一点时间，避免 busy loop
-            await asyncio.sleep(0)
-            try:
-                yield q.get_nowait()
-            except queue.Empty:
-                if done.is_set():
-                    # 排空剩余（如果最后那一刻 put 后才 set）
-                    try:
-                        yield q.get_nowait()
-                    except queue.Empty:
-                        pass
-                    if error:
-                        raise error[0]
-                    return
-                # 未完成，让出事件循环
-                await asyncio.sleep(0.01)
+        from mmi.core.exceptions import StreamError
+        try:
+            stream = self.client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                stream=True,
+            )
+            for chunk in stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                content = getattr(delta, "content", None) if delta else None
+                if content:
+                    yield content
+        except Exception as e:
+            raise StreamError(f"OpenAI stream failed: {e}") from e
 
     def classify(self, prompt, *, options) -> Classification:
         if not options:
@@ -540,8 +495,8 @@ class AnthropicLLMProvider(LLMProvider):
                     return text
         raise LLMError("Anthropic chat: no text in response")
 
-    async def stream_chat(self, messages, *, max_tokens=512, temperature=0.7):
-        # 简化:不做流式,直接返整段(Anthropic 流式需要 SSE 解析,本轮不做)
+    def stream_chat(self, messages, *, max_tokens=512, temperature=0.7):
+        """Anthropic 简化流式:不做 SSE 解析,直接 yield 整段。"""
         yield self.chat(messages, max_tokens=max_tokens, temperature=temperature)
 
     def classify(self, prompt, *, options) -> Classification:
