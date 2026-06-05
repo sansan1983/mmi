@@ -21,9 +21,9 @@ from mmi.agent.steps import (
 from mmi.agent.trace import Tracer, TraceRecord
 from mmi.agent.validate import Validator
 from mmi.core import manager as mgr_module
-from mmi.core.llm import LLMProvider, Classification
 from mmi.core.session import Session, SessionMeta
 from mmi.core import storage
+from tests._fakes import MinimalStubLLM
 
 
 # ---------------------------------------------------------------------------
@@ -31,14 +31,7 @@ from mmi.core import storage
 # ---------------------------------------------------------------------------
 
 
-class _StubLLM(LLMProvider):
-    name = "stub"
-
-    def chat(self, messages, **kw):
-        return "stub-reply"
-
-    def classify(self, prompt, *, options):
-        return Classification(choice=options[0], confidence=0.99)
+_StubLLM = MinimalStubLLM  # 本地别名,沿用旧 test 文件的命名
 
 
 def _fresh_registry():
