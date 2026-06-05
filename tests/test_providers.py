@@ -1,7 +1,8 @@
 """tests/test_providers.py —— core.providers + core.model_fetcher 单元测试。
 
 覆盖:
-  - 5 个预置 provider catalog(id/name/base_url/preferred_api_style 正确)
+  - 4 个预置 provider catalog(id/name/base_url/preferred_api_style 正确)
+  - R8.5.3:Kimi (moonshot) 从预置移除 — 官方参数不匹配,要走自定义
   - get_provider 找得到 / 找不到 / 是 custom 时抛
   - make_custom_provider 必填 base_url 校验
   - model_fetcher:mock HTTP 走通 OpenAI 风格响应
@@ -26,13 +27,13 @@ from mmi.core import model_fetcher, providers
 
 
 def test_provider_count():
-    """5 个预置 + custom 单独处理。"""
-    assert len(providers.list_providers()) == 5
+    """4 个预置 + custom 单独处理(R8.5.3 起 Kimi 移除)。"""
+    assert len(providers.list_providers()) == 4
 
 
 def test_provider_ids_unique():
     ids = [p.id for p in providers.list_providers()]
-    assert len(set(ids)) == 5
+    assert len(set(ids)) == 4
 
 
 def test_deepseek_uses_anthropic():
@@ -53,11 +54,6 @@ def test_minimax_uses_anthropic():
 
 def test_glm_uses_openai():
     p = providers.get_provider("glm")
-    assert p.preferred_api_style == "openai"
-
-
-def test_moonshot_uses_openai():
-    p = providers.get_provider("moonshot")
     assert p.preferred_api_style == "openai"
 
 

@@ -413,7 +413,8 @@ class OpenAILLMProvider(LLMProvider):
         """OpenAI 兼容 chat()。
 
         R8.5.1b:按 provider-params 报告补 top_p / stop / response_format(均可选,
-        None 不发)。各家(智谱/Kimi/千问)都支持,具体语义各家可能略不同。
+        None 不发)。各家(智谱/千问)都支持,具体语义各家可能略不同。
+        (Kimi 已在 R8.5.3 从预置移除,要用走自定义)
         """
         kwargs: dict = {
             "model": self.model,
