@@ -192,9 +192,9 @@ def test_max_batch_workers_constructor_kwarg():
         def stream_chat(self, messages, *, max_tokens=4096, temperature=0.7):  # noqa: ARG002
             yield ""
 
-        def classify(self, turns, *, language: str | None = None):  # noqa: ARG002
-            from mmi.core.classifier import ClassifierResult
-            return ClassifierResult(is_trash=False, reason="", confidence=0.0)
+        def classify(self, prompt, *, options):  # noqa: ARG002
+            from mmi.core.llm import Classification
+            return Classification(choice=options[0] if options else "", confidence=0.0)
 
     m = SessionManager(llm=_StubLLM(), max_batch_workers=8)
     assert m._max_batch_workers == 8
