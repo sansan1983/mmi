@@ -347,9 +347,28 @@ def batch_chat(self, items: list[tuple[str, str]]) -> list["ChatResult"]:
 - **4.9** — 验证 + 持久化拆 hook(允许外部插入审计)
 - **4.10** — `ValidationResult.issues[i]` 内部结构扩展(`severity: "error"/"warning"` + `span: tuple[int,int]` + `rule_id: str`)
 
-外加本轮遗留 1-8 项。
+外加本轮遗留 1-3 / 7-8 项(4 留待归档,5/6 **不进 R8**,见下)。
 
 预计 R8 净工时:~6h(每项 1-1.5h)。
+
+---
+
+## 8. R8 排除项(用户决议,2026-06-05)
+
+| 排除项 | 原因 | 归属 |
+|---|---|---|
+| **遗留 #4** `batch_chat` 并发(`asyncio.gather`) | 顺序够用,真并发要解决 LLM rate-limit + 内存峰值,优先级低 | 后期单独 round |
+| **遗留 #5** `tests/test_cli.py` ctrim 硬编码 | 跨期已知,不在功能路径上 | 留待归档(与 #4 一起) |
+| **遗留 #6** TUI `stream_chat` 真流式(chunk-by-chunk 增量) | 用户:表面层,后期统一处理 | **后期单独 round(暂叫 R8.5/R9"TUI 美化")** |
+
+### 后续 R8.5 / R9"TUI 美化"待办清单(2026-06-05 暂记)
+
+- TUI 真流式:worker 线程读 `stream_chat` + `call_from_thread` 推 RichLog 增量
+- Markdown 渲染 / 代码高亮(RichLog 已经支持,但 chat.py 没接)
+- Token 计数 / agent 角标 / 状态指示
+- 主题色调整(目前 Tokyo Night 单色,缺渲染层次)
+
+合计估时 3-5h(轻度打磨档)/ 10-15h(重设计档,看用户选)。**不在 R8 范围**。
 
 ---
 
