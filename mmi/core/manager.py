@@ -93,8 +93,13 @@ class SessionManager:
       - **LLM 注入**：构造时可指定 llm（测试用 Mock），默认走 get_default_provider()
     """
 
-    def __init__(self, llm: LLMProvider | None = None):
+    # R9 9.4:默认并发度。__new__ 直接构造的实例(如测试 mock)也能继承这个默认值。
+    _max_batch_workers: int = 4
+
+    def __init__(self, llm: LLMProvider | None = None, max_batch_workers: int = 4):
+        """R9 9.4:加 max_batch_workers 参,控制 batch_* 并发度。"""
         self.llm = llm if llm is not None else get_default_provider()
+        self._max_batch_workers = max_batch_workers
 
     # ----- 列表 / 搜索 -----------------------------------------------------
 
@@ -122,44 +127,91 @@ class SessionManager:
         return storage.read_meta(session_id)
 
     def batch_touch(self, session_ids: list[str]) -> None:
-        """批量 touch,单条失败只 log 不阻塞。"""
-        for sid in session_ids:
-            try:
-                self.touch(sid)
-            except Exception:
-                log.exception("batch_touch failed for %s", sid)
+        """批量 touch,单条失败只 log 不阻塞。
+
+        R9 9.4:多 item 时走 ThreadPoolExecutor 并发(默认 4 worker)。
+        """
+        if len(session_ids) <= 1:
+            # 单元素快路径
+            for sid in session_ids:
+                try:
+                    self.touch(sid)
+                except Exception:
+                    log.exception("batch_touch failed for %s", sid)
+            return
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=self._max_batch_workers) as ex:
+            futures = [ex.submit(self.touch, sid) for sid in session_ids]
+            for fut, sid in zip(futures, session_ids):
+                try:
+                    fut.result()
+                except Exception:
+                    log.exception("batch_touch failed for %s", sid)
 
     def batch_get_meta(self, session_ids: list[str]) -> dict[str, object]:
-        """批量拉 meta,不存在的 sid 跳过(不抛 KeyError)。"""
+        """批量拉 meta,不存在的 sid 跳过(不抛 KeyError)。
+
+        R9 9.4:多 item 时走 ThreadPoolExecutor 并发。
+        """
         out: dict[str, object] = {}
-        for sid in session_ids:
-            try:
-                out[sid] = self.get_session_meta(sid)
-            except KeyError:
-                continue
-            except Exception:
-                log.exception("batch_get_meta failed for %s", sid)
+        if len(session_ids) <= 1:
+            for sid in session_ids:
+                try:
+                    out[sid] = self.get_session_meta(sid)
+                except KeyError:
+                    continue
+                except Exception:
+                    log.exception("batch_get_meta failed for %s", sid)
+            return out
+        from concurrent.futures import ThreadPoolExecutor
+        results: dict[str, BaseException | object] = {}
+        with ThreadPoolExecutor(max_workers=self._max_batch_workers) as ex:
+            futures = {ex.submit(self.get_session_meta, sid): sid for sid in session_ids}
+            for fut, sid in futures.items():
+                try:
+                    results[sid] = fut.result()
+                except KeyError:
+                    continue  # 不存在 → 跳过
+                except Exception:
+                    log.exception("batch_get_meta failed for %s", sid)
+                    # 错误不进 out(原语义)
+        out = {sid: r for sid, r in results.items() if not isinstance(r, BaseException)}
         return out
 
     def batch_chat(self, items: list[tuple[str, str]]) -> list["ChatResult"]:
-        """顺序执行 chat(),单条抛错不阻塞其它(返 ChatResult 带 error)。"""
+        """顺序或并发执行 chat(),单条抛错不阻塞其它(返 ChatResult 带 error)。
+
+        R9 9.4:多 item 时改用 ThreadPoolExecutor 并发,默认 4 worker。
+        返回顺序与输入 items 顺序一致。
+        """
         from mmi.agent.result import ChatResult as _ChatResult
         from mmi.agent.router import IntentType
-        out: list[_ChatResult] = []
-        for sid, msg in items:
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _run(sid: str, msg: str) -> _ChatResult:
             try:
-                out.append(self.orchestrator.chat(sid, msg))
+                return self.orchestrator.chat(sid, msg)
             except Exception as e:
                 log.exception("batch_chat item failed: sid=%s", sid)
-                out.append(_ChatResult(
+                return _ChatResult(
                     reply="",
                     intent=IntentType.UNKNOWN,
                     agent_id="",
                     validation=None,
                     trace_ids=[],
                     error=str(e),
-                ))
-        return out
+                )
+
+        if len(items) <= 1:
+            return [_run(sid, msg) for sid, msg in items]
+
+        results: list[_ChatResult | None] = [None] * len(items)
+        with ThreadPoolExecutor(max_workers=self._max_batch_workers) as ex:
+            futures = {ex.submit(_run, sid, msg): i for i, (sid, msg) in enumerate(items)}
+            for fut, i in futures.items():
+                # _run 已经隔离异常,这里 result() 不会抛
+                results[i] = fut.result()
+        return results  # type: ignore[return-value]
 
     def list_sessions(self, limit: int = 10) -> list[SessionMeta]:
         """返回前 N 个会话（Phase 4：按 heat 降序，同分时按 last_access 倒序）。
