@@ -52,10 +52,10 @@ ROUND_LOG §遗留问题 列 5 条:
 |---|---|---|---|
 | **9.1** test_cli.py ctrim 硬编码 → 归档 | `tests/test_cli.py` 删,内容迁 docs | 0 | 0.5h |
 | **9.2** EventBus 节流(validation.issue 大量 issue 不刷屏) | `mmi/agent/steps.py` + `tests/test_event_bus_throttle.py` | 6-8 | 1.5h |
-| **9.3** ValidationIssue.span 字段补齐(切到具体字符位置)+ to_dict 透传 | `mmi/agent/validate.py` + `mmi/agent/result.py` + `tests/test_validate.py` | 4-6 | 1-2h |
-| **9.4** Manager.batch_chat 并发(后台线程池) | `mmi/core/manager.py` + `tests/test_batch_chat.py` | 6-8 | 2-3h |
+| **9.3** ValidationIssue.span 边界测试补强(R8 4.10 已填字段,本轮补覆盖) | `mmi/agent/validate.py` 测 + `tests/test_validate.py` | 3 | 0.5-1h |
+| **9.4** Manager.batch_chat 并发(后台线程池) | `mmi/core/manager.py` + `tests/test_batch_chat.py` | 7-8 | 2-3h |
 
-合计:**~5-7h,净增测试 16-22**
+合计:**~5-7h,净增测试 16-21**
 
 ---
 
@@ -126,41 +126,38 @@ for issue in ctx.validation.issues:
 
 ---
 
-### 9.3 ValidationIssue.span 字段补齐 + 切到具体字符位置
+### 9.3 ValidationIssue.span 边界测试补强(R8 4.10 已填字段,本轮补覆盖)
 
-#### 现状
+#### 现状(写 spec 时核了一遍)
 
-R8 4.10 引入 `ValidationIssue` 4 字段(frozen=True):
+R8 4.10 已在 `mmi/agent/validate.py:97-145` 把 4 字段全填了,`tests/test_validate.py:66-107` 已有 4 个测试:
 
-```python
-@dataclass(frozen=True)
-class ValidationIssue:
-    name: str
-    severity: Literal["error", "warning"]
-    message: str
-    span: tuple[int, int] | None = None
-```
+- `test_validator_rule_id_is_populated` — rule_id
+- `test_validator_span_set_for_regex_match` — regex span
+- `test_validator_span_none_for_missing_substring` — required 缺 → None
+- `test_validator_span_set_for_max_length` — max_length span
 
-`span` 字段已有(在 result.py to_dict 序列化),但**当前 `_check_rules` 全部填 None**(TODO 状态),没有真正切到具体违规位置。
+**所以 R8 末遗留第 4 条("ValidationIssue.span UI 还没接")实际只指 UI 接线(留 R9.x / R10),逻辑层 R8 已完成。**
 
-#### 设计
+#### 本轮设计(仅补覆盖,不动 UI)
 
-- `mmi/agent/validate.py`:
-  - 改 `_check_rules` 让规则匹配时填 span `(start, end)`(字符偏移,从 0)
-  - 优先级:`pattern`(regex finditer) > `required_substrings`(str.find) > 长度规则(整段 `0, len(output)`)
-  - `max_length` / `min_length` 违规:span = `(0, len(output))`(整段标黄)
-- `mmi/agent/result.py`:无需改(to_dict 已透传 asdict,span 跟着走)
-- TUI 暂不接(留 R9.x),只保证字段填了 + 序列化对
+补 3 个边界测试,把 `_check_rules` 各种命中路径全锁住:
+
+- `test_validator_span_set_for_min_length` — min_length 触发,span 整段
+- `test_validator_span_first_match_when_pattern_repeats` — regex 多 match,只取首
+- `test_validator_to_dict_includes_span` — result.to_dict() 序列化时 span 字段透传(去 result.py 测也行,这里就近)
+
+注:`to_dict` 在 `mmi/agent/result.py:34-45` 已经 `asdict(issue)`,span 是 tuple,会自动展开成 list,无需改实现。
 
 #### 验证
 
-- `test_pattern_match_fills_span_with_match_position` — regex 命中位置精确
-- `test_pattern_multiple_matches_fills_first_span` — 多匹配取首
-- `test_required_substring_match_fills_span` — required 命中
-- `test_max_length_violation_fills_full_span` — 整段
-- `test_min_length_violation_fills_full_span` — 整段
-- `test_to_dict_includes_span` — 序列化透传
-- `test_no_match_leaves_span_none` — 命中不上时 None
+- 3 个新测试全过
+- 旧 4 个测试零回归
+- ruff 0
+
+#### 不做(留 R9.x / R10)
+
+- TUI 接线(`mmi/tui/...` 接 span 做高亮)— 涉及 textual CSS 改造 + UI 状态机,跟流式 TUI 一并做更顺
 
 ---
 
@@ -168,49 +165,59 @@ class ValidationIssue:
 
 #### 现状
 
-R7 4.6 引入 `Manager.batch_chat` / `batch_touch` / `batch_get_meta`,但**全部串行执行**:
+R7 4.6 引入 `Manager.batch_chat` / `batch_touch` / `batch_get_meta`,全部串行执行:
 
 ```python
-def batch_chat(self, session_ids: list[str], user_message: str, ...) -> list[ChatResult]:
-    return [self.chat(sid, user_message, ...) for sid in session_ids]
+def batch_chat(self, items: list[tuple[str, str]]) -> list["ChatResult"]:
+    out: list[_ChatResult] = []
+    for sid, msg in items:
+        try:
+            out.append(self.orchestrator.chat(sid, msg))
+        except Exception as e:
+            ...
+            out.append(_ChatResult(..., error=str(e)))
+    return out
 ```
 
 TUI 多会话并行选中 / 批量评分等场景下,串行效率低。
 
+storage 层**已经有 portalocker 文件锁**(`mmi/core/storage.py:8-12` 注释:`写操作全部走 portalocker 排他锁,同一文件级别的 fcntl/Windows LockFileEx`)。所以本轮**不需要再加 RLock** — 跨进程安全已经有,跨线程同一 manager 单实例天然单线程(只是把循环改成线程池,各 worker 调 chat 触发 storage 时 portalocker 自动串行化)。
+
 #### 设计
 
 - `mmi/core/manager.py`:
-  - `SessionManager` 构造加可选字段 `max_batch_workers: int = 4`
+  - `SessionManager.__init__` 加可选字段 `max_batch_workers: int = 4`
   - `batch_chat` 改用 `concurrent.futures.ThreadPoolExecutor`:
     ```python
-    def batch_chat(self, session_ids, user_message, **kwargs):
-        if len(session_ids) <= 1 or self._max_batch_workers == 1:
-            return [self.chat(sid, user_message, **kwargs) for sid in session_ids]
-        with ThreadPoolExecutor(max_workers=self._max_batch_workers) as ex:
-            futures = {ex.submit(self.chat, sid, user_message, **kwargs): sid for sid in session_ids}
-            results = [None] * len(session_ids)
-            for i, (sid, fut) in enumerate(zip(session_ids, futures)):
+    def batch_chat(self, items, *, max_workers=None):
+        if len(items) <= 1:
+            return self._batch_chat_serial(items)
+        workers = max_workers if max_workers is not None else self._max_batch_workers
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futures = {ex.submit(self.orchestrator.chat, sid, msg): i
+                       for i, (sid, msg) in enumerate(items)}
+            results: list[_ChatResult | None] = [None] * len(items)
+            for fut, i in futures.items():
                 try:
                     results[i] = fut.result()
                 except Exception as e:
-                    results[i] = _error_result(e)
-            return results
+                    results[i] = _error_chat_result(e)
+            return results  # type: ignore[return-value]
     ```
   - `batch_touch` / `batch_get_meta`:同模式(IO 密集,线程池收益)
-  - 加全局 `BATCH_WORKERS` 限速保护(默认 4,跟 deep analysis 经验值)
-- SessionStorage 读写:`storage.py` 用 `threading.RLock`(R5 没做,这次顺手;但要测现有 storage 测试不破)
-- 异常隔离:单 session 失败不影响其它(原 chat 抛 → 包成 ChatResult(reply="[error]", error=...))
+  - 异常隔离:单 session 失败不影响其它(原 chat 抛 → 包成 ChatResult 带 error 字段)
+  - 单元素快路径:1 个 item 走原串行实现,避免线程池开销
 
 #### 验证
 
-- `test_batch_chat_serial_when_single_session` — 1 session 走串行快路径
-- `test_batch_chat_concurrent_when_multiple` — 3 session 用 3 worker
+- `test_batch_chat_serial_when_single_item` — 1 item 走串行快路径
+- `test_batch_chat_concurrent_when_multiple` — 3 item 用 3 worker 跑(用慢 LLM 假实现验证并发启动)
 - `test_batch_chat_respects_max_workers` — 限速
-- `test_batch_chat_isolates_exceptions` — 单失败不影响其它
-- `test_batch_touch_concurrent` — 同上
-- `test_batch_get_meta_concurrent` — 同上
-- `test_storage_concurrent_read_write_safe` — storage RLock 验证
-- `test_existing_storage_tests_unchanged` — 回归(跑 storage 全测试)
+- `test_batch_chat_isolates_exceptions` — 单 chat 失败 → 返 error ChatResult,其它正常
+- `test_batch_chat_preserves_input_order` — 返回 list 顺序跟输入 items 顺序一致
+- `test_batch_touch_concurrent` — 同模式
+- `test_batch_get_meta_concurrent` — 同模式
+- `test_existing_batch_chat_tests_unchanged` — 旧 `tests/test_batch_chat.py` 零回归
 
 ---
 
@@ -218,8 +225,8 @@ TUI 多会话并行选中 / 批量评分等场景下,串行效率低。
 
 | 风险 | 缓解 |
 |---|---|
-| storage 加 RLock 破旧测试 | 先跑 `pytest tests/test_storage.py` 基线;RLock 嵌套安全(可重入) |
-| ThreadPoolExecutor 引入新依赖 | `concurrent.futures` 是 stdlib,无依赖 |
+| 线程池并发触发 storage portalocker 死锁 | portalocker 是文件级非递归锁,跨线程同文件会串行;设计 + 测试各 session 独立,无跨锁 |
+| ThreadPoolExecutor 引入新依赖 | `concurrent.futures` 是 stdlib,无依赖(本仓 `mmi/core/summarizer.py` 已在用) |
 | 节流阈值 5 不准 | 留 `issue_batch_threshold` 配置 + `force_individual` 开关,可调 |
 | 归档 test_cli 漏内容 | docs/history/ 留完整 copy + 头部 DEPRECATED 标签 |
 
