@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from mmi.agent.base import BaseAgent
-from mmi.agent.modes import MODE_PROMPTS, ThinkingMode
+from mmi.agent.base import BaseAgent, ToolDef
+from mmi.agent.modes import ThinkingMode, get_mode_prompt
 from mmi.agent.orchestrator import Orchestrator
 from mmi.agent.registry import AgentMeta, AgentRegistry
 from mmi.agent.router import IntentType, Router
@@ -25,7 +25,7 @@ __all__ = [
     "ToolDef",
     # Modes
     "ThinkingMode",
-    "MODE_PROMPTS",
+    "get_mode_prompt",
     # Validation
     "Validator",
     "ValidationRule",
@@ -38,3 +38,4 @@ __all__ = [
     "TraceRecord",
     "Tracer",
 ]
+

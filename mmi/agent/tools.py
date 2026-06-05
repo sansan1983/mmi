@@ -27,7 +27,7 @@ class ToolDef:
     name: str
     description: str
     schema: dict = field(default_factory=dict)
-    func: Callable[..., Any] = field(repr=False)
+    func: "Callable[..., Any]" = field(default=None, repr=False)  # type: ignore[assignment]
 
 
 # --------------------------------------------------------------------------
@@ -118,13 +118,23 @@ def tool(
 
 
 def discover_builtin_tools() -> None:
-    """Auto-discover and register all tools decorated with @tool.
+    """3.6 改进:Auto-discover and register all tools decorated with @tool.
 
-    Call once at startup.  Tools defined in other modules are registered
-    as a side-effect of module import; this function is a hook for any
-    additional discovery logic if needed.
+    实现:遍历 mmi.agent.builtin 包的成员,import 它们触发 @tool 副作用。
+    之前是空 pass,3.6 改为真正 import。
     """
-    # At this point all modules using @tool should already be imported,
-    # so the registry is pre-populated.  This function exists as an
-    # extension point for future plug-in scanning.
-    pass
+    import importlib
+    import pkgutil
+
+    import mmi.agent.builtin as _builtin_pkg
+
+    for mod_info in pkgutil.iter_modules(_builtin_pkg.__path__):
+        mod_name = f"mmi.agent.builtin.{mod_info.name}"
+        # 跳过内置 agent 类(它们不是工具)
+        if mod_name.endswith(".agents"):
+            continue
+        try:
+            importlib.import_module(mod_name)
+        except Exception:
+            # 单个 module 失败不影响其他
+            pass

@@ -198,6 +198,30 @@ def build_parser() -> argparse.ArgumentParser:
     p_config_wizard.add_argument("--no-fetch", action="store_true",
                                   help="不拉模型列表,直接用 --model")
 
+    # mmi agent —— 3.9 列出/调用已注册 Agent
+    p_agent = sub.add_parser("agent", help="管理 Agent(列表/调用)")
+    p_agent_sub = p_agent.add_subparsers(dest="agent_cmd")
+    p_agent_list = p_agent_sub.add_parser("list", help="列出所有已注册 Agent")
+    p_agent_list.add_argument("--tag", help="按 tag 过滤")
+    p_agent_invoke = p_agent_sub.add_parser("invoke", help="直接调指定 Agent")
+    p_agent_invoke.add_argument("agent_id", help="Agent ID(如 code_review)")
+    p_agent_invoke.add_argument("message", help="用户消息")
+    p_agent_invoke.add_argument("--session", required=True, help="目标 session_id")
+    p_agent_invoke.add_argument("--mode", choices=["STANDARD", "BRAINSTORM", "AUDIT"], help="思维模式")
+
+    # mmi skill —— 3.12 列出/创建 Skill
+    p_skill = sub.add_parser("skill", help="管理 Skill(列表/创建/搜索)")
+    p_skill_sub = p_skill.add_subparsers(dest="skill_cmd")
+    p_skill_sub.add_parser("list", help="列出所有 Skill")
+    p_skill_search = p_skill_sub.add_parser("search", help="按关键词搜索 Skill")
+    p_skill_search.add_argument("query", help="搜索关键词")
+    p_skill_create = p_skill_sub.add_parser("create", help="创建新 Skill")
+    p_skill_create.add_argument("skill_id", help="Skill 唯一 ID")
+    p_skill_create.add_argument("name", help="Skill 名称")
+    p_skill_create.add_argument("content", help="Skill 内容(prompt/描述)")
+    p_skill_create.add_argument("--apply-scene", default="", help="使用场景")
+    p_skill_create.add_argument("--tags", default="", help="逗号分隔的 tags")
+
     return parser
 
 
@@ -675,6 +699,10 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_memory(args, mgr)
     if args.command == "config":
         return cmd_config(args, mgr)
+    if args.command == "agent":
+        return cmd_agent(args, mgr)
+    if args.command == "skill":
+        return cmd_skill(args, mgr)
     if args.command == "tui":
         return cmd_tui(args, mgr)
 
@@ -1136,3 +1164,150 @@ def _confirm(prompt: str, *, default: bool = False) -> bool:
             return True
         if raw in ("n", "no"):
             return False
+
+
+def cmd_agent(args, mgr) -> int:
+    """3.9 mmi agent list/invoke."""
+    from mmi.agent.registry import AgentRegistry
+    from mmi.agent.builtin import CodeReviewAgent, DocAgent  # noqa: F401
+
+    sub = getattr(args, "agent_cmd", None)
+    if sub is None:
+        print("usage: mmi agent {list|invoke}")
+        return 1
+
+    # 注册内置 Agent(幂等)
+    reg = AgentRegistry.get_instance()
+    _register_builtin_agents(reg)
+
+    if sub == "list":
+        metas = reg.list_all(tag=getattr(args, "tag", None))
+        if not metas:
+            print("未注册任何 Agent")
+            return 0
+        print(f"已注册 {len(metas)} 个 Agent:\n")
+        for m in metas:
+            tags = ",".join(m.tags) if m.tags else "-"
+            print(f"  [{m.agent_id:14s}] {m.name:14s}  v{m.version}  ({m.description})")
+            print(f"      tags: {tags}  builtin: {m.builtin}")
+        return 0
+
+    if sub == "invoke":
+        from mmi.agent.orchestrator import Orchestrator
+        from mmi.agent.modes import ThinkingMode as TM
+
+        agent_id = args.agent_id
+        agent_cls = reg.match(agent_id)
+        if agent_cls is None:
+            print(f"[!] Agent {agent_id!r} 未注册")
+            return 1
+        # 构造 orchestrator
+        try:
+            orch = Orchestrator(manager=mgr, llm=mgr.llm)
+        except Exception as e:
+            print(f"[!] Orchestrator 初始化失败: {e}")
+            return 1
+        mode_str = getattr(args, "mode", None)
+        mode = TM[mode_str] if mode_str else None
+        try:
+            reply = orch.chat(
+                session_id=args.session,
+                user_message=args.message,
+                mode=mode,
+            )
+            print(reply)
+            return 0
+        except Exception as e:
+            print(f"[!] 调用失败: {e}")
+            return 1
+
+    print(f"unknown agent subcommand: {sub}")
+    return 1
+
+
+def _register_builtin_agents(reg) -> None:
+    """3.9:把内置 Agent 注册到 registry(幂等,重复注册 ValueError 被吞)。"""
+    from mmi.agent.builtin import CodeReviewAgent, DocAgent
+    from mmi.agent.registry import AgentMeta
+    try:
+        reg.register(AgentMeta(
+            agent_id="code_review",
+            name="Code Review",
+            description="审查/重构/审计源码",
+            tags=["code", "review", "security", "audit"],
+            version="0.1.0",
+            builtin=True,
+        ), CodeReviewAgent)
+    except ValueError:
+        pass
+    try:
+        reg.register(AgentMeta(
+            agent_id="doc",
+            name="Doc",
+            description="生成文档/翻译",
+            tags=["doc", "docstring", "translation"],
+            version="0.1.0",
+            builtin=True,
+        ), DocAgent)
+    except ValueError:
+        pass
+
+
+def cmd_skill(args, mgr) -> int:
+    """3.12 mmi skill list/search/create."""
+    from mmi.agent.skill import Skill, SkillLibrary, SkillType
+    from datetime import datetime, timezone
+
+    sub = getattr(args, "skill_cmd", None)
+    if sub is None:
+        print("usage: mmi skill {list|search|create}")
+        return 1
+
+    lib = SkillLibrary.get_instance()
+
+    if sub == "list":
+        skills = list(lib._skills.values()) if hasattr(lib, "_skills") else []
+        if not skills:
+            print("无 Skill。试用 `mmi skill create` 添加。")
+            return 0
+        print(f"共 {len(skills)} 个 Skill:\n")
+        for s in skills:
+            print(f"  [{s.skill_id:20s}] {s.name}  ({s.skill_type.name})")
+            print(f"      {s.apply_scene}")
+        return 0
+
+    if sub == "search":
+        query = args.query
+        matches = lib.match(query, limit=10)
+        if not matches:
+            print(f"未找到匹配 {query!r} 的 Skill")
+            return 0
+        print(f"找到 {len(matches)} 个匹配:\n")
+        for s in matches:
+            print(f"  [{s.skill_id:20s}] {s.name}  ({s.skill_type.name})")
+            print(f"      {s.apply_scene[:60]}")
+        return 0
+
+    if sub == "create":
+        now = datetime.now(timezone.utc).isoformat()
+        tags = [t.strip() for t in (args.tags or "").split(",") if t.strip()]
+        skill = Skill(
+            skill_id=args.skill_id,
+            name=args.name,
+            skill_type=SkillType.BUILTIN,  # 用户创建标 BUILTIN,后续 6.1 区分
+            content=args.content,
+            apply_scene=args.apply_scene,
+            tags=tags,
+            created_at=now,
+            updated_at=now,
+        )
+        try:
+            lib.create(skill)
+            print(f"[✓] Skill {args.skill_id!r} 已创建")
+            return 0
+        except ValueError as e:
+            print(f"[!] {e}")
+            return 1
+
+    print(f"unknown skill subcommand: {sub}")
+    return 1

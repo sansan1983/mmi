@@ -1,7 +1,11 @@
-"""Dynamic agent registration and discovery."""
+"""Dynamic agent registration and discovery.
+
+3.8 改进:get_instance() 加 threading.Lock,避免多线程环境创建多实例。
+"""
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar
 
@@ -41,15 +45,23 @@ class AgentRegistry:
     """
 
     _instance: ClassVar[AgentRegistry | None] = None
+    _instance_lock: ClassVar[threading.Lock] = threading.Lock()
 
     def __init__(self) -> None:
         self._agents: dict[str, tuple[AgentMeta, type[BaseAgent]]] = {}
 
     @classmethod
     def get_instance(cls) -> AgentRegistry:
-        """Return the singleton registry, creating it on first call."""
-        if cls._instance is None:
-            cls._instance = cls()
+        """Return the singleton registry, creating it on first call.
+
+        3.8 改进:加锁保护(原版无锁,多线程可能创建多实例)。
+        """
+        # 快速路径:已存在直接返
+        if cls._instance is not None:
+            return cls._instance
+        with cls._instance_lock:
+            if cls._instance is None:
+                cls._instance = cls()
         return cls._instance
 
     # ------------------------------------------------------------------

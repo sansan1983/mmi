@@ -71,5 +71,11 @@
   "tui.search.empty": "（无匹配结果）",
   "tui.search.hint": "实时 fuzzy 匹配 · Enter 进入会话 · Esc 返回",
   "tui.slash.title": "命令（↑↓ 选 · Enter 确认 · Esc 关闭）",
-  "tui.slash.empty": "（无匹配命令）"
+  "tui.slash.empty": "（无匹配命令）",
+  "agent.mode.STANDARD.suffix": "你是一个乐于助人、精确的助手。简洁回答。",
+  "agent.mode.STANDARD.preamble": "",
+  "agent.mode.BRAINSTORM.suffix": "你现在处于头脑风暴模式。生成多个多样的想法。不要审查或自我审查。重数量胜于质量。在前面的想法上延伸。推迟判断。",
+  "agent.mode.BRAINSTORM.preamble": "[头脑风暴] 考虑多角度,生成大胆想法。",
+  "agent.mode.AUDIT.suffix": "你现在处于审计模式。严格检查输入。识别弱点、逻辑谬误、安全风险、合规漏洞。精度胜于礼貌。直接指出问题。",
+  "agent.mode.AUDIT.preamble": "[审计] 进行彻底批判性审查。"
 }

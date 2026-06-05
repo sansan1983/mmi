@@ -17,6 +17,7 @@
 | `round_3.md` | 2026-06-04 | **临时变更计划 改进 Round 1** | P0-1 短会话入库 + P0-3 tiktoken + P2-8 任务队列(三期顺延) |
 | `round_4.md` | 2026-06-04 | **临时变更计划 改进 Round 2** | P0-2 jieba + BM25 + P1-4 截断优先级 + P1-5 动态窗口 |
 | `round_5.md` | 2026-06-04 | **临时变更计划 改进 Round 3** | P1-7 增量摘要 + P2-10 FAISS 池化 + P2-9 简化版热度 |
+| `round_6_phase3.md` | 2026-06-05 | **三期 3.1–3.12 全部 12 项** | BaseAgent + Router + Orchestrator + Validator + CodeReviewAgent + DocAgent + 生命周期 + registry 单例 + CLI agent/skill + mode locale |
 
 ---
 

@@ -29,14 +29,14 @@
 | 零期 | 修复基础链路(P0/P2 修复 + 队列安全) | ✅ 完成(改进 R1) |
 | 一期 | 搜索与检索质量(jieba+BM25 + manager.search) | 🟡 部分完成(改 R2 上了 jieba+BM25;manager.search 全文+TF 归一化+rapidfuzz+titler jieba 剩余) |
 | 二期 | 性能优化(增量摘要 + 上下文缓存 + 动态窗口 + 截断 + FAISS 池 + 热度) | 🟡 部分完成(改 R2-3 上了 1.4 截断 + 1.5 窗口 + 2.1 增量 + 2.5 池 + 2.6 简化版热度;**2.2 上下文缓存暂缓**;1.6 F1 增量+1.6 F3 池上限+1.6 F4 history 上限+2.7-2.9 summarizer 收尾剩余) |
-| **三期** | **Agent 最小可用**(orchestrator + router + validator + 1 个 Agent) | ⬜ 待开始 |
+| **三期** | **Agent 最小可用**(orchestrator + router + validator + 1 个 Agent) | ✅ 完成(R6,3.1–3.12 全清,见 [handover-history/round_6_phase3.md](handover-history/round_6_phase3.md)) |
 | 四期 | 架构加固(Pipeline + EventBus + LLM 重试/流式 + 批量接口) | ⬜ 待开始 |
 | 五期 | 周边模块(storage/GC/titler/classifier/config/i18n/paths 改进) | ⬜ 待开始 |
 | 六期 | 生态扩展(Skill/Trace 持久化 + Provider 增强 + GUI + MCP) | ⬜ 待开始 |
 
 ### 各期完整任务清单(来自 IMPROVEMENT-PLAN + mmi_modules_deep_analysis)
 
-**三期(Agent 最小可用)— 12 项, ~22.5h**:
+**三期(Agent 最小可用)— 12 项, ~22.5h**:✅ 全部完成(R6)
 - 3.1 CoreAgent 接口协议(高,1h)
 - 3.2 Router.classify 规则分类器(严重,2h)
 - 3.3 Orchestrator.chat 核心逻辑(严重,3h)

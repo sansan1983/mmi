@@ -71,5 +71,11 @@
   "tui.search.empty": "(no matches)",
   "tui.search.hint": "live fuzzy match · Enter to open session · Esc to go back",
   "tui.slash.title": "commands (↑↓ to choose · Enter to confirm · Esc to close)",
-  "tui.slash.empty": "(no matching commands)"
+  "tui.slash.empty": "(no matching commands)",
+  "agent.mode.STANDARD.suffix": "You are a helpful, precise assistant. Answer concisely.",
+  "agent.mode.STANDARD.preamble": "",
+  "agent.mode.BRAINSTORM.suffix": "You are in brainstorm mode. Generate many diverse ideas. Do not censor or self-censor. Quantity over quality. Build on previous ideas. Defer judgment.",
+  "agent.mode.BRAINSTORM.preamble": "[Brainstorm] Consider multiple perspectives and generate bold ideas.",
+  "agent.mode.AUDIT.suffix": "You are in audit mode. Critically examine the input. Identify weaknesses, logical fallacies, security risks, and compliance gaps. Prefer precision over politeness. State concerns directly.",
+  "agent.mode.AUDIT.preamble": "[Audit] Perform a thorough critical review."
 }

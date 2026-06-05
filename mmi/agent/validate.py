@@ -24,6 +24,11 @@ class ValidationRule:
     max_length: int | None = None
     """Reject if output exceeds this length."""
 
+    min_length: int | None = None
+    """3.4 改进:Reject if output is shorter than this length."""
+
+    min_length_error: str = "output too short (looks like empty/noise reply)"
+
 
 class Validator:
     """Validates agent output before it is returned to the user.
@@ -85,12 +90,21 @@ class Validator:
         return ValidationResult(passed=True, reasons=[])
 
     def _check_rules(self, text: str) -> ValidationResult:
-        """Run the fast rule engine."""
+        """Run the fast rule engine.
+
+        3.4 改进:每条 rule 跑完把失败原因加进 reasons(之前没 min_length 检查)。
+        """
         reasons: list[str] = []
         for rule in self._rules:
-            # Length check
+            # Length check (max)
             if rule.max_length is not None and len(text) > rule.max_length:
                 reasons.append(f"[{rule.name}] Output exceeds max length {rule.max_length}")
+
+            # Length check (min) — 3.4 新增
+            if rule.min_length is not None and len(text.strip()) < rule.min_length:
+                reasons.append(
+                    f"[{rule.name}] {rule.min_length_error} (got {len(text.strip())} chars)"
+                )
 
             # Required substrings
             for sub in rule.required_substrings:
@@ -123,14 +137,29 @@ class ValidationResult:
 
 
 def _default_rules() -> list[ValidationRule]:
-    """Return the default rule set applied when no rules are supplied."""
+    """Return the default rule set applied when no rules are supplied.
+
+    3.4 改进:加 4 条基础规则(no_dangerous_tokens / not_empty / not_too_short / no_dangerous_phrase)
+    """
     return [
+        # 危险:泄露密钥
         ValidationRule(
             name="no_dangerous_tokens",
             pattern=r"(?i)\b(password|secret|api.?key|token)\s*=\s*[\"'][^\"']+[\"']",
         ),
+        # 输出非空
         ValidationRule(
             name="not_empty",
             required_substrings=[],
+        ),
+        # 输出不能太短(避免 LLM 只返 "OK" 这种没意义)
+        ValidationRule(
+            name="not_too_short",
+            min_length=2,
+        ),
+        # 危险短语(粗筛;真正安全靠 LLM deep audit,3.x 不实现)
+        ValidationRule(
+            name="no_dangerous_phrase",
+            pattern=r"(?i)\b(rm\s+-rf\s+/|drop\s+database|format\s+c:|del\s+/\*)\b",
         ),
     ]

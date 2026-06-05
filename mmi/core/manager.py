@@ -157,6 +157,60 @@ class SessionManager:
         """读全文（frontmatter + body）。"""
         return storage.read_session(session_id)
 
+    def persist_turn(
+        self,
+        session_id: str,
+        user_input: str,
+        reply: str,
+        *,
+        language: str | None = None,
+    ) -> ChatResult:
+        """3.3 新增:Orchestrator 用的轻量持久化。
+
+        适用:agent 已经生成了 reply,只需要把 turn 写盘 + 后台摘要调度。
+        不构造 LLM messages(不需要 context builder / summarizer 触发条件检查)。
+
+        Args:
+            session_id: 目标会话
+            user_input: 用户消息
+            reply: agent 已生成的回复
+            language: 输出语言(默认读 i18n.get_lang())
+
+        Returns:
+            ChatResult(reply=reply, 其他标志全 False)
+        """
+        if language is None:
+            from . import i18n
+            language = i18n.get_lang()
+        # 验证会话存在
+        storage.read_meta(session_id)
+        # 追加 turn(内部已加锁)
+        s = storage.append_turn(session_id, user_input, reply)
+        # 跨会话记忆入库
+        try:
+            summarizer._schedule_memory_store(session_id)
+        except Exception:
+            pass
+        # 摘要检查 + 调度
+        try:
+            will_update = summarizer.should_update_summary(s.meta, s.body)
+        except Exception:
+            will_update = False
+        if will_update:
+            summarizer.schedule_summary_update(
+                session_id, self.llm, language=language
+            )
+        # heat 重算
+        self._recompute_heat(session_id)
+        return ChatResult(
+            reply=reply,
+            title_updated=False,
+            summary_updated=will_update,
+            context_truncated=False,
+            trashed=False,
+            trashed_reason="",
+        )
+
     def chat(self, session_id: str, user_input: str, *, language: str | None = None) -> ChatResult:
         """对话入口（Phase 3：走 loader + summarizer）。
 
