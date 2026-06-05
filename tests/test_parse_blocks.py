@@ -19,7 +19,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from mmi.tui.parse_blocks import (  # noqa: E402
-    Block,
     TextBlock,
     ThinkingBlock,
     ToolCallBlock,

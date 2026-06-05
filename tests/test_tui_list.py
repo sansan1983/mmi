@@ -126,9 +126,7 @@ def test_list_screen_enter_enters_existing_session(isolated_home, make_app, scri
     from textual.widgets import ListView
     from mmi.core import manager as mgr_module
     from mmi.tui.screens.chat import ChatScreen
-    import re
 
-    from mmi.core.session import ULID_PATTERN
 
     mgr = mgr_module.SessionManager(llm=scripted_llm_factory())
     # 预先创建一个会话（不要 n 触发新的）
@@ -511,7 +509,6 @@ def test_ctrl_d_shared_window_with_ctrl_c(
 ):
     """Ctrl+C 后 1.5s 内按 Ctrl+D 应当退出（共享双击窗口）。"""
     pytest.importorskip("textual")
-    from textual.widgets import TextArea
     from mmi.core import manager as mgr_module
     from mmi.tui.screens.chat import ChatScreen
 
@@ -641,8 +638,6 @@ def test_textarea_height_is_multi_line(isolated_home, make_app, scripted_llm_fac
 def test_parse_blocks_thinking():
     """> [thinking] 起始的行应被解析为 ThinkingBlock。"""
     from mmi.tui.parse_blocks import (
-        ThinkingBlock,
-        TextBlock,
         parse_blocks,
     )
     blocks = parse_blocks("hello\n> [thinking] 我在想\n> 第二行\nworld")

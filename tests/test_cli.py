@@ -1,5 +1,9 @@
 """Round 0.8: CLI rename + info tests (pytest风格验证脚本)。"""
-import subprocess, sys, os, tempfile, json
+import subprocess
+import sys
+import os
+import tempfile
+import json
 from pathlib import Path
 
 VENV = "/home/ubuntu/ctrim/.venv/bin/python"

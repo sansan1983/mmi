@@ -275,10 +275,8 @@ def test_delete_session_not_found(isolated_home):
 
 def test_atomic_write_does_not_leave_tmp(isolated_home, monkeypatch):
     """写失败时不应留下 .tmp 残留。"""
-    from mmi.core import storage
 
     # 强制 atomic write 失败
-    orig = Path.rename
     def boom(self, *a, **kw):
         raise OSError("simulated rename failure")
     monkeypatch.setattr(Path, "rename", boom)
@@ -311,8 +309,10 @@ def test_concurrent_append_no_corruption(isolated_home):
 
     t1 = threading.Thread(target=worker, args=("A",))
     t2 = threading.Thread(target=worker, args=("B",))
-    t1.start(); t2.start()
-    t1.join(); t2.join()
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
 
     s = read_session(sid)
     # 共 10 轮对话，user / assistant 各 10 行

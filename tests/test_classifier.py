@@ -13,7 +13,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -21,8 +20,6 @@ from mmi.core.classifier import (  # noqa: E402
     CONFIDENCE_THRESHOLD,
     ClassificationResult,
     LLM_MAX_TURNS,
-    RULE_MAX_CHARS,
-    RULE_MAX_TURNS,
     Verdict,
     classify_session,
     is_trash,
