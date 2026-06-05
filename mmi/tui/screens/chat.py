@@ -97,6 +97,7 @@ class ChatScreen(Screen):
 
     BINDINGS = [
         Binding("ctrl+c", "exit_or_clear", "退出", show=False),
+        Binding("enter", "handle_submit", "发送", show=False),
         Binding("ctrl+enter", "handle_submit", "发送", show=False),
     ]
 
@@ -470,25 +471,64 @@ class ChatScreen(Screen):
 def _run_bash(cmd: str) -> str:
     """通过 subprocess 跑 bash 命令，返回 stdout+stderr 文本。
 
-    安全约束：shell=False + shlex.split + 10s timeout。
+    安全约束：10s timeout。Unix 用 shell=False + shlex.split，Windows 用 shell=True。
     """
     if not cmd:
         return ""
+    stripped = cmd.strip()
+    if not stripped:
+        return ""
     try:
-        args = shlex.split(cmd)
-        if not args:
-            return ""
-        result = subprocess.run(
-            args,
-            capture_output=True,
-            text=True,
-            timeout=10.0,
-        )
-        out = result.stdout or ""
-        if result.stderr:
-            out += result.stderr
+        import platform
+        if platform.system() == "Windows":
+            # Windows: cmd.exe 没有内置命令的独立可执行文件，需 shell=True
+            # console 输出通常是 OEM code page（如 CP936/GBK），需正确处理编码
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                timeout=10.0,
+            )
+            out_bytes = (result.stdout or b"") + (result.stderr or b"")
+            if not out_bytes:
+                out = ""
+            else:
+                # 尝试 UTF-8，失败回退到 OEM code page
+                try:
+                    out = out_bytes.decode("utf-8")
+                except UnicodeDecodeError:
+                    import ctypes
+                    try:
+                        cp = ctypes.cdll.kernel32.GetConsoleOutputCP()
+                        enc = f"cp{cp}"
+                    except Exception:
+                        enc = "gbk"
+                    out = out_bytes.decode(enc, errors="replace")
+        else:
+            args = shlex.split(cmd)
+            if not args:
+                return ""
+            result = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                timeout=10.0,
+            )
+            out = result.stdout or ""
+            if result.stderr:
+                out += result.stderr
         if result.returncode != 0:
-            out = f"[exit {result.returncode}]\n{out}"
+            # 检查是否为"command not found"类型错误
+            out_lower = out.lower().strip()
+            not_found_keywords = [
+                "not found", "not recognized", "没有找到", "不是内部或外部命令",
+                "could not be found", "is not recognized",
+            ]
+            if any(kw in out_lower for kw in not_found_keywords):
+                cmd_name = cmd.strip().split()[0] if cmd.strip() else cmd
+                out = f"[bash] command not found: {cmd_name}"
+            else:
+                out = f"[exit {result.returncode}]\n{out}"
         return out.rstrip("\n") or "(no output)"
     except FileNotFoundError as e:
         return f"[bash] command not found: {e}"

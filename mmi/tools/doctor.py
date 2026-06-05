@@ -13,8 +13,8 @@ import os
 from datetime import datetime, timezone
 
 # 确保能找到 mmi（未通过 pip install 安装时）
-_mmi_root = os.environ.get("MMI_ROOT", "/home/ubuntu/mmi-fusion")
-if _mmi_root not in sys.path:
+_mmi_root = os.environ.get("MMI_ROOT", "")
+if _mmi_root and _mmi_root not in sys.path:
     sys.path.insert(0, _mmi_root)
 
 from mmi.core import storage as storage_mod  # noqa: E402
@@ -56,7 +56,7 @@ def check_imports() -> dict:
         ("mmi.core.storage", "storage"),
         ("mmi.core.gc", "gc"),
         ("mmi.core.summarizer", "summarizer"),
-        ("mmi.core.loader", "loader"),
+        ("mmi.core.context", "context"),
         ("mmi.core.manager", "manager"),
     ]
     ok, fail = 0, 0

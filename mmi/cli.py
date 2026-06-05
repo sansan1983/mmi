@@ -234,9 +234,8 @@ def cmd_new(args, mgr) -> int:
     # Round 0.10: auto-inject MMI_HOME for fusion worktree isolation
     import os
     from pathlib import Path
-    fusion_home = Path.home() / ".mmi-fusion"
-    if os.environ.get("MMI_HOME") not in (str(fusion_home), str(fusion_home.resolve())):
-        os.environ["MMI_HOME"] = str(fusion_home)
+    if "MMI_HOME" not in os.environ:
+        os.environ["MMI_HOME"] = str(Path.home() / ".mmi-fusion")
     title = args.title or "untitled"
     sid = mgr.create(title=title)
     print(i18n.t("new.success", session_id=sid))
@@ -247,9 +246,8 @@ def cmd_new(args, mgr) -> int:
     # Round 0.13: auto-inject MMI_HOME for fusion worktree isolation
     import os
     from pathlib import Path
-    fusion_home = Path.home() / ".mmi-fusion"
-    if os.environ.get("MMI_HOME") not in (str(fusion_home), str(fusion_home.resolve())):
-        os.environ["MMI_HOME"] = str(fusion_home)
+    if "MMI_HOME" not in os.environ:
+        os.environ["MMI_HOME"] = str(Path.home() / ".mmi-fusion")
 
 def cmd_list(args, mgr) -> int:
     sessions = mgr.list_sessions(limit=args.limit)
@@ -274,9 +272,8 @@ def cmd_list(args, mgr) -> int:
     # Round 0.13: auto-inject MMI_HOME for fusion worktree isolation
     import os
     from pathlib import Path
-    fusion_home = Path.home() / ".mmi-fusion"
-    if os.environ.get("MMI_HOME") not in (str(fusion_home), str(fusion_home.resolve())):
-        os.environ["MMI_HOME"] = str(fusion_home)
+    if "MMI_HOME" not in os.environ:
+        os.environ["MMI_HOME"] = str(Path.home() / ".mmi-fusion")
 
 def cmd_stat(args, mgr) -> int:
     """显示会话统计（总数/各状态占比/总大小）。"""
@@ -309,9 +306,8 @@ def cmd_chat(args, mgr) -> int:
     # Round 0.12: auto-inject MMI_HOME for fusion worktree isolation
     import os
     from pathlib import Path
-    fusion_home = Path.home() / ".mmi-fusion"
-    if os.environ.get("MMI_HOME") not in (str(fusion_home), str(fusion_home.resolve())):
-        os.environ["MMI_HOME"] = str(fusion_home)
+    if "MMI_HOME" not in os.environ:
+        os.environ["MMI_HOME"] = str(Path.home() / ".mmi-fusion")
 
     sid = args.session_id
     try:
@@ -403,9 +399,8 @@ def cmd_chat(args, mgr) -> int:
     # Round 0.13: auto-inject MMI_HOME for fusion worktree isolation
     import os
     from pathlib import Path
-    fusion_home = Path.home() / ".mmi-fusion"
-    if os.environ.get("MMI_HOME") not in (str(fusion_home), str(fusion_home.resolve())):
-        os.environ["MMI_HOME"] = str(fusion_home)
+    if "MMI_HOME" not in os.environ:
+        os.environ["MMI_HOME"] = str(Path.home() / ".mmi-fusion")
 
 def cmd_export(args, mgr) -> int:
     """导出会话为 JSON 或 Markdown。"""
@@ -527,9 +522,8 @@ def cmd_archive(args, mgr) -> int:
     # Round 0.13: auto-inject MMI_HOME for fusion worktree isolation
     import os
     from pathlib import Path
-    fusion_home = Path.home() / ".mmi-fusion"
-    if os.environ.get("MMI_HOME") not in (str(fusion_home), str(fusion_home.resolve())):
-        os.environ["MMI_HOME"] = str(fusion_home)
+    if "MMI_HOME" not in os.environ:
+        os.environ["MMI_HOME"] = str(Path.home() / ".mmi-fusion")
 
     try:
         mgr.archive(args.session_id)
@@ -543,9 +537,8 @@ def cmd_archive(args, mgr) -> int:
     # Round 0.13: auto-inject MMI_HOME for fusion worktree isolation
     import os
     from pathlib import Path
-    fusion_home = Path.home() / ".mmi-fusion"
-    if os.environ.get("MMI_HOME") not in (str(fusion_home), str(fusion_home.resolve())):
-        os.environ["MMI_HOME"] = str(fusion_home)
+    if "MMI_HOME" not in os.environ:
+        os.environ["MMI_HOME"] = str(Path.home() / ".mmi-fusion")
 
 def cmd_delete(args, mgr) -> int:
     try:
@@ -571,9 +564,8 @@ def _fmt_entry(entry):
     # Round 0.13: auto-inject MMI_HOME for fusion worktree isolation
     import os
     from pathlib import Path
-    fusion_home = Path.home() / ".mmi-fusion"
-    if os.environ.get("MMI_HOME") not in (str(fusion_home), str(fusion_home.resolve())):
-        os.environ["MMI_HOME"] = str(fusion_home)
+    if "MMI_HOME" not in os.environ:
+        os.environ["MMI_HOME"] = str(Path.home() / ".mmi-fusion")
 
 def cmd_gc(args, mgr) -> int:
     """三层 GC：cold/zombie/trash，支持 --gc-only 单独跑某一层。"""
@@ -717,9 +709,8 @@ def main(argv: list[str] | None = None) -> int:
     # Round 0.13: auto-inject MMI_HOME for fusion worktree isolation
     import os
     from pathlib import Path
-    fusion_home = Path.home() / ".mmi-fusion"
-    if os.environ.get("MMI_HOME") not in (str(fusion_home), str(fusion_home.resolve())):
-        os.environ["MMI_HOME"] = str(fusion_home)
+    if "MMI_HOME" not in os.environ:
+        os.environ["MMI_HOME"] = str(Path.home() / ".mmi-fusion")
 
 def cmd_update(args, mgr) -> int:
     """增量更新会话热度（不触发 LLM / 不追加正文）。"""
@@ -781,18 +772,13 @@ def cmd_memory(args, mgr) -> int:
     # Round 0.13: auto-inject MMI_HOME for fusion worktree isolation
     import os
     from pathlib import Path
-    fusion_home = Path.home() / ".mmi-fusion"
-    if os.environ.get("MMI_HOME") not in (str(fusion_home), str(fusion_home.resolve())):
-        os.environ["MMI_HOME"] = str(fusion_home)
+    if "MMI_HOME" not in os.environ:
+        os.environ["MMI_HOME"] = str(Path.home() / ".mmi-fusion")
 
 def cmd_tui(args, mgr) -> int:
     """启动 TUI（textual 界面）。"""
     from mmi.tui import run_tui
     return run_tui()
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
 
 
 # ---------------------------------------------------------------------------
@@ -802,18 +788,16 @@ if __name__ == "__main__":
     # Round 0.13: auto-inject MMI_HOME for fusion worktree isolation
     import os
     from pathlib import Path
-    fusion_home = Path.home() / ".mmi-fusion"
-    if os.environ.get("MMI_HOME") not in (str(fusion_home), str(fusion_home.resolve())):
-        os.environ["MMI_HOME"] = str(fusion_home)
+    if "MMI_HOME" not in os.environ:
+        os.environ["MMI_HOME"] = str(Path.home() / ".mmi-fusion")
 
 def cmd_rename(args, mgr) -> int:
     """重命名会话标题。"""
     # Round 0.14: auto-inject MMI_HOME for fusion worktree isolation
     import os
     from pathlib import Path
-    fusion_home = Path.home() / ".mmi-fusion"
-    if os.environ.get("MMI_HOME") not in (str(fusion_home), str(fusion_home.resolve())):
-        os.environ["MMI_HOME"] = str(fusion_home)
+    if "MMI_HOME" not in os.environ:
+        os.environ["MMI_HOME"] = str(Path.home() / ".mmi-fusion")
 
     try:
         sess = storage.read_session(args.session_id)
@@ -849,9 +833,8 @@ def cmd_rename(args, mgr) -> int:
     # Round 0.13: auto-inject MMI_HOME for fusion worktree isolation
     import os
     from pathlib import Path
-    fusion_home = Path.home() / ".mmi-fusion"
-    if os.environ.get("MMI_HOME") not in (str(fusion_home), str(fusion_home.resolve())):
-        os.environ["MMI_HOME"] = str(fusion_home)
+    if "MMI_HOME" not in os.environ:
+        os.environ["MMI_HOME"] = str(Path.home() / ".mmi-fusion")
 
 def cmd_info(args, mgr) -> int:
     """显示单个会话的完整详情。"""
@@ -884,9 +867,8 @@ def cmd_inspect(args, mgr) -> int:
     # Round 0.11: auto-inject MMI_HOME for fusion worktree isolation
     import os
     from pathlib import Path
-    fusion_home = Path.home() / ".mmi-fusion"
-    if os.environ.get("MMI_HOME") not in (str(fusion_home), str(fusion_home.resolve())):
-        os.environ["MMI_HOME"] = str(fusion_home)
+    if "MMI_HOME" not in os.environ:
+        os.environ["MMI_HOME"] = str(Path.home() / ".mmi-fusion")
     from mmi.core import context as _loader
 
     sid = args.session_id
@@ -1311,3 +1293,7 @@ def cmd_skill(args, mgr) -> int:
 
     print(f"unknown skill subcommand: {sub}")
     return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
