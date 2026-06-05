@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 from mmi.agent.validate import ValidationResult
 
 if TYPE_CHECKING:
+    from mmi.agent.pipeline import StepError
     from mmi.agent.router import IntentType
 
 
@@ -27,6 +28,8 @@ class ChatResult:
     attempts: int = 1
     latency_ms: float = 0.0
     error: str | None = None
+    errors: list["StepError"] = field(default_factory=list)
+    """R7 4.2 引入:Pipeline 累积的 step 错误列表(诊断信息,UI 一般只看 error 字符串)。"""
 
     def to_dict(self) -> dict[str, Any]:
         d = asdict(self)
@@ -37,4 +40,6 @@ class ChatResult:
                 "passed": self.validation.passed,
                 "issues": [asdict(i) for i in self.validation.issues],
             }
+        # errors 序列化为 [str(e), ...] 便于 JSON 化
+        d["errors"] = [str(e) for e in self.errors]
         return d
