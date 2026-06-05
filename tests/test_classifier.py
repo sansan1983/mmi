@@ -128,11 +128,18 @@ def test_rule2_llm_says_no_trashes():
     assert r.method == "llm"
 
 
-def test_rule2_low_confidence_trashes():
+def test_rule2_low_confidence_keeps_when_choice_yes():
+    """R8.5.1:LLM 判 choice=yes 时,即使置信度低也保留(避免误删活跃会话)。
+
+    之前的行为(choice=yes + 0.3 置信度 → IS_TRASH)是 bug:
+    容易被 LLM 偶尔的 low-confidence-but-yes 误判把正常会话干掉。
+    修复后:只有 LLM 明确 choice=no 才标 trash;低置信 yes 走 IS_REAL。
+    """
     llm = _StubLLM(choice="yes", confidence=0.3)  # < 0.6 阈值
     turns = _turns([f"msg {i}" for i in range(5)])
     r = classify_session(turns, llm)
-    assert r.verdict == Verdict.IS_TRASH
+    assert r.verdict == Verdict.IS_REAL
+    assert "below threshold" in r.reason  # 备注里说明为什么保留(可观察)
 
 
 def test_rule2_confidence_at_threshold_keeps():
