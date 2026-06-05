@@ -66,7 +66,7 @@ PROVIDERS: tuple[ProviderInfo, ...] = (
         base_url="https://api.minimaxi.com/v1",
         anthropic_base_url="https://api.minimaxi.com/anthropic",
         api_key_url="https://api.minimaxi.com/user-center/basic-information/interface-key",
-        api_key_env="MiniMax_API_KEY",
+        api_key_env="MINIMAX_API_KEY",
         notes="Anthropic 端点 https://api.minimaxi.com/anthropic",
     ),
     ProviderInfo(

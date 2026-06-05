@@ -93,7 +93,7 @@ class LLMProvider(ABC):
         self,
         messages: list[dict],
         *,
-        max_tokens: int = 512,
+        max_tokens: int = 4096,
         temperature: float = 0.7,
     ) -> str:
         """发一轮对话，返回 LLM 文本回复。
@@ -333,7 +333,7 @@ class EchoLLMProvider(LLMProvider):
     _CHAT_PREFIX = "[echo] "
     _CLASSIFY_DEFAULT_CONFIDENCE = 0.99
 
-    def chat(self, messages, *, max_tokens=512, temperature=0.7) -> str:
+    def chat(self, messages, *, max_tokens=4096, temperature=0.7) -> str:
         # 找最后一条 user 消息
         last_user = ""
         for m in reversed(messages):
@@ -351,7 +351,7 @@ class EchoLLMProvider(LLMProvider):
             raw=f"echo:{options[0]}",
         )
 
-    def stream_chat(self, messages, *, max_tokens=512, temperature=0.7):
+    def stream_chat(self, messages, *, max_tokens=4096, temperature=0.7):
         """Echo 流式:走默认实现即可(单 chunk 整段)。"""
         # 走基类默认实现(走 chat + 单 chunk),保持 echo 行为一致
         yield from super().stream_chat(messages)
@@ -400,14 +400,35 @@ class OpenAILLMProvider(LLMProvider):
         self.model = model
         self.client = OpenAI(**kwargs)
 
-    def chat(self, messages, *, max_tokens=512, temperature=0.7) -> str:
+    def chat(
+        self,
+        messages,
+        *,
+        max_tokens=4096,
+        temperature=0.7,
+        top_p: float | None = None,
+        stop: str | list[str] | None = None,
+        response_format: dict | None = None,
+    ) -> str:
+        """OpenAI 兼容 chat()。
+
+        R8.5.1b:按 provider-params 报告补 top_p / stop / response_format(均可选,
+        None 不发)。各家(智谱/Kimi/千问)都支持,具体语义各家可能略不同。
+        """
+        kwargs: dict = {
+            "model": self.model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+        if top_p is not None:
+            kwargs["top_p"] = top_p
+        if stop is not None:
+            kwargs["stop"] = stop
+        if response_format is not None:
+            kwargs["response_format"] = response_format
         try:
-            resp = self.client.chat.completions.create(
-                model=self.model,
-                messages=messages,
-                max_tokens=max_tokens,
-                temperature=temperature,
-            )
+            resp = self.client.chat.completions.create(**kwargs)
         except Exception as e:
             raise LLMError(f"OpenAI chat failed: {e}") from e
 
@@ -418,7 +439,7 @@ class OpenAILLMProvider(LLMProvider):
             raise LLMError("OpenAI chat: empty content")
         return content
 
-    def stream_chat(self, messages, *, max_tokens=512, temperature=0.7):
+    def stream_chat(self, messages, *, max_tokens=4096, temperature=0.7):
         """OpenAI 真流式:同步迭代 stream=True 返回的 chunk。
 
         OpenAI SDK 的 stream=True 返回同步 `Stream[ChatCompletionChunk]`,
@@ -427,6 +448,9 @@ class OpenAILLMProvider(LLMProvider):
         设计要点(spec 4.4):
           - 同步迭代器:不阻塞 — OpenAI SDK 的 stream 内部异步发请求
           - LLMError 包成 StreamError:与默认实现行为一致
+
+        R8.5.1b:加 stream_options={"include_usage": true},
+        让最后一块附带 usage 信息(各家都支持)。
         """
         from mmi.core.exceptions import StreamError
         try:
@@ -436,6 +460,7 @@ class OpenAILLMProvider(LLMProvider):
                 max_tokens=max_tokens,
                 temperature=temperature,
                 stream=True,
+                stream_options={"include_usage": True},
             )
             for chunk in stream:
                 if not chunk.choices:
@@ -553,7 +578,20 @@ class AnthropicLLMProvider(LLMProvider):
         except Exception as e:
             raise LLMError(f"Anthropic: bad JSON: {e}") from e
 
-    def chat(self, messages, *, max_tokens=512, temperature=0.7) -> str:
+    def chat(
+        self,
+        messages,
+        *,
+        max_tokens=4096,
+        temperature=0.7,
+        top_p: float | None = None,
+        stop_sequences: list[str] | None = None,
+    ) -> str:
+        """Anthropic chat()。
+
+        R8.5.1b:按 provider-params 报告补 top_p / stop_sequences(均可选,
+        None 不发)。注意:Anthropic 协议下停止词叫 stop_sequences(不是 OpenAI 的 stop)。
+        """
         # Anthropic 要求 system 和 user 分离
         system_parts: list[str] = []
         user_msgs: list[dict] = []
@@ -572,6 +610,10 @@ class AnthropicLLMProvider(LLMProvider):
         }
         if system_parts:
             payload["system"] = "\n\n".join(system_parts)
+        if top_p is not None:
+            payload["top_p"] = top_p
+        if stop_sequences is not None:
+            payload["stop_sequences"] = stop_sequences
         data = self._post(payload)
         # 响应格式: {content: [{type: "text", text: "..."}], ...}
         blocks = data.get("content") or []
@@ -582,7 +624,7 @@ class AnthropicLLMProvider(LLMProvider):
                     return text
         raise LLMError("Anthropic chat: no text in response")
 
-    def stream_chat(self, messages, *, max_tokens=512, temperature=0.7):
+    def stream_chat(self, messages, *, max_tokens=4096, temperature=0.7):
         """Anthropic 简化流式:不做 SSE 解析,直接 yield 整段。"""
         yield self.chat(messages, max_tokens=max_tokens, temperature=temperature)
 
