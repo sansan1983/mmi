@@ -19,6 +19,7 @@
 | `round_5.md` | 2026-06-04 | **临时变更计划 改进 Round 3** | P1-7 增量摘要 + P2-10 FAISS 池化 + P2-9 简化版热度 |
 | `round_6_phase3.md` | 2026-06-05 | **三期 3.1–3.12 全部 12 项** | BaseAgent + Router + Orchestrator + Validator + CodeReviewAgent + DocAgent + 生命周期 + registry 单例 + CLI agent/skill + mode locale |
 | `round_7_phase4_core.md` | 2026-06-05 | **四期 4.1 / 4.2 (容器+6 Step + Orchestrator 改走 Pipeline) / 4.3 / 4.4 / 4.5 / 4.6 — 6 项全部收口** | EventBus + Pipeline 容器+6 Step + Orchestrator 走 Pipeline + LLM chat_with_retry + LLM stream_chat 同步迭代器 + ChatResult + ValidationResult.issues 字段迁移 + Manager batch_* |
+| `round_8_phase4_fb.md` | 2026-06-05 | **四期 4.7 / 4.8 / 4.9 / 4.10 — 4 项 + 跨期 #7/#8 全部收口** | ValidationIssue 4 字段 + Tracer→EventBus + Validate/Persist 拆 hook + stream_chat_with_retry + tests/_fakes.py + ruff 跨期清 0 |
 
 ---
 
