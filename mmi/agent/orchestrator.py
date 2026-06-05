@@ -7,8 +7,13 @@
   - 生命周期钩子:on_start / on_stop / on_error
   - 调用 Manager.persist() 持久化结果
 
+R7 4.2 改进:把 5 步流程抽到 Pipeline + 6 个内建 Step;
+Orchestrator.chat() 改成构造 PipelineCtx 然后跑 pipeline.run()。
+外部行为尽量保持不变,但 chat() 现在返 ChatResult(原 str 返值用 chat_legacy()
+兼容,供 phase 3 测试和老调用点用)。
+
 Agent 池来源:AgentRegistry(全局单例)。
-LLM 来源:Manager 注入 → self.llm。
+LLM 来源:Manager 注入 → self.llm → AgentRegistry.set_default_llm()。
 """
 
 from __future__ import annotations
@@ -16,14 +21,18 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from mmi.agent.event_bus import bus as default_bus
 from mmi.agent.modes import ThinkingMode
+from mmi.agent.pipeline import Pipeline, PipelineCtx
 from mmi.agent.registry import AgentRegistry
+from mmi.agent.result import ChatResult
 from mmi.agent.router import Router
-from mmi.agent.skill import SkillLibrary
-from mmi.agent.trace import TraceRecord, Tracer
+from mmi.agent.steps import default_steps
+from mmi.agent.trace import Tracer
 from mmi.agent.validate import Validator
 
 if TYPE_CHECKING:
+    from mmi.agent.event_bus import EventBus
     from mmi.core.llm import LLMProvider
     from mmi.core.manager import SessionManager
 
@@ -33,12 +42,14 @@ log = logging.getLogger(__name__)
 class Orchestrator:
     """Central coordinator for a single user turn.
 
-    3.3 改进:从空壳变完整 — 5 步流程。
+    3.3 实现:5 步流程(类内硬编码)。
+    R7 4.2 改造:把流程拆到 Pipeline + 6 个内建 Step;Orchestrator 只负责
+    装配依赖、构造 PipelineCtx、调 pipeline.run()。
     """
 
     __slots__ = (
         "manager", "router", "registry", "validator", "tracer",
-        "skill_library", "llm",
+        "skill_library", "llm", "pipeline", "bus",
     )
 
     def __init__(
@@ -50,7 +61,9 @@ class Orchestrator:
         registry: AgentRegistry | None = None,
         validator: Validator | None = None,
         tracer: Tracer | None = None,
-        skill_library: SkillLibrary | None = None,
+        skill_library: object = None,
+        pipeline: Pipeline | None = None,
+        event_bus: "EventBus | None" = None,
     ) -> None:
         self.manager = manager
         self.llm = llm  # 不传则用 manager 自带
@@ -58,10 +71,30 @@ class Orchestrator:
         self.registry = registry or AgentRegistry.get_instance()
         self.validator = validator or Validator()
         self.tracer = tracer or Tracer()
-        self.skill_library = skill_library or SkillLibrary.get_instance()
+        self.skill_library = skill_library
+        self.bus = event_bus or default_bus
+
+        # R7 4.2:把 llm / skill_library 注入 registry,让 InstantiateStep 能
+        # 拿到依赖去构造 BaseAgent 实例(避免重复从 orchestrator 取)。
+        if self.llm is not None:
+            self.registry.set_default_llm(self.llm)
+        if self.skill_library is not None:
+            self.registry.set_default_skill_library(self.skill_library)
+
+        if pipeline is None:
+            pipeline = Pipeline(
+                default_steps(
+                    router=self.router,
+                    registry=self.registry,
+                    validator=self.validator,
+                    manager=self.manager,
+                ),
+                event_bus=self.bus,
+            )
+        self.pipeline = pipeline
 
     # ------------------------------------------------------------------
-    # 3.3 改进:核心 chat()
+    # R7 4.2:核心 chat() 走 Pipeline
     # ------------------------------------------------------------------
 
     def chat(
@@ -69,138 +102,60 @@ class Orchestrator:
         session_id: str,
         user_message: str,
         mode: ThinkingMode | None = None,
-    ) -> str:
-        """Process a single user turn end-to-end.
+    ) -> ChatResult:
+        """Process a single user turn end-to-end via Pipeline。
 
-        流程:
-          1) classify intent
-          2) select agent (按 priority)
-          3) run agent.run() → 失败兜底
-          4) validate output(规则引擎)
-          5) manager.persist() 持久化(turn + summary 调度 + 记忆入库)
+        流程(由 Pipeline 6 步装配执行):
+          1) ClassifyStep     - router.classify → intent
+          2) RouteStep        - router.route   → agent_id
+          3) InstantiateStep  - registry.get   → BaseAgent 实例
+          4) RunStep          - agent.run      → reply
+          5) ValidateStep     - validator.check → ValidationResult
+          6) PersistStep      - manager.persist_turn
 
         Returns:
-            agent 的 reply
+            ChatResult(包含 reply / intent / agent_id / validation / trace_ids)
         """
-        try:
-            # 1) 意图分类
-            intent = self.router.classify(user_message)
-            # 2) 选 agent
-            agent_ids = self.router.route(intent)
-            agent_id = agent_ids[0] if agent_ids else "qa"
-
-            # 3) 构造 agent 实例并 run
-            agent = self._instantiate_agent(agent_id)
-            if agent is None:
-                # 兜底:返回"未注册 agent"提示
-                return f"[Orchestrator] No agent registered for id={agent_id!r} (intent={intent.name})"
+        ctx = PipelineCtx(
+            session_id=session_id,
+            user_message=user_message,
+            mode=mode,
+            manager=self.manager,
+        )
+        result = self.pipeline.run(ctx)
+        # 3.x 兼容:每次成功的 chat 也记 trace(用 ctx 的 trace 列表)
+        for tr in ctx.trace:
             try:
-                # 3.x 简易 trace:每次构造一个 TraceRecord
-                self.tracer.record(TraceRecord(
-                    trace_id="",
-                    session_id=session_id,
-                    turn_index=0,   # 4.x 改造;3.x 不追踪
-                    intent=intent.name,
-                    agent_id=agent_id,
-                    user_message=user_message,
-                    response="",
-                    mode=(mode.name if mode else ""),
-                    latency_ms=0.0,
-                ))
-                reply = agent.run(user_message, mode=mode)
-            except Exception as e:
-                log.exception("Agent %s run failed", agent_id)
-                reply = f"[Agent {agent_id} error] {e}"
-                self.tracer.record(TraceRecord(
-                    trace_id="",
-                    session_id=session_id,
-                    turn_index=0,
-                    intent=intent.name,
-                    agent_id=agent_id,
-                    user_message=user_message,
-                    response=reply,
-                    mode=(mode.name if mode else ""),
-                    latency_ms=0.0,
-                ))
+                self.tracer.record(tr)
+            except Exception:
+                pass
+        return result
 
-            # 4) 验证
-            result = self.validator.check(reply, intent)
-            if not result.passed:
-                log.warning("Validation failed for %s: %s", agent_id, [i.message for i in result.issues])
-                self.tracer.record(TraceRecord(
-                    trace_id="",
-                    session_id=session_id,
-                    turn_index=0,
-                    intent=intent.name,
-                    agent_id=agent_id,
-                    user_message=user_message,
-                    response=reply,
-                    mode=(mode.name if mode else ""),
-                    latency_ms=0.0,
-                ))
+    def chat_legacy(
+        self,
+        session_id: str,
+        user_message: str,
+        mode: ThinkingMode | None = None,
+    ) -> str:
+        """R7 4.2:返回纯 reply 字符串(phase 3 + 老调用点兼容)。
 
-            # 5) 持久化
-            try:
-                self.manager.persist_turn(
-                    session_id=session_id,
-                    user_input=user_message,
-                    reply=reply,
-                )
-            except Exception as e:
-                log.exception("Persist failed: %s", e)
-
-            # 成功 trace(覆盖前面的空版本)
-            self.tracer.record(TraceRecord(
-                trace_id="",
-                session_id=session_id,
-                turn_index=0,
-                intent=intent.name,
-                agent_id=agent_id,
-                user_message=user_message,
-                response=reply,
-                mode=(mode.name if mode else ""),
-                latency_ms=0.0,
-            ))
-            return reply
-        except Exception as e:
-            log.exception("Orchestrator.chat failed: %s", e)
-            return f"[Orchestrator error] {e}"
+        等价于 ``self.chat(...).reply``;如果 chat() 出错,返 ``result.error``
+        或占位 "[Orchestrator error] ..."。
+        """
+        result = self.chat(session_id, user_message, mode=mode)
+        if result.reply:
+            return result.reply
+        if result.error:
+            return f"[Orchestrator error] {result.error}"
+        return ""
 
     # ------------------------------------------------------------------
-    # 3.3 改进:辅助
+    # 3.x 兼容:暴露 _instantiate_agent 给外部 mock 场景(已无内调用)
     # ------------------------------------------------------------------
 
     def _instantiate_agent(self, agent_id: str) -> Any:
         """从 registry 拿 agent 类,实例化(注入 llm + 共享组件)。
 
-        3.3 实现:用 try/except 包裹,BaseAgent 的子类签名可能不一
-        (有的子类 CodeReviewAgent(llm=) 有,有的没),失败了用无参构造再 setattr。
+        R7 4.2:内部流程已搬到 InstantiateStep;保留此方法仅为老测试/老调用点。
         """
-        from mmi.agent.tools import ToolRegistry
-
-        agent_cls = self.registry.match(agent_id)
-        if agent_cls is None:
-            return None
-        try:
-            return agent_cls(
-                llm=self.llm,
-                skill_library=self.skill_library,
-                tool_registry=ToolRegistry.get_instance(),
-            )
-        except TypeError:
-            # 子类签名不兼容 → 无参构造后 setattr
-            try:
-                inst = agent_cls()
-            except Exception:
-                return None
-            for attr, val in [
-                ("llm", self.llm),
-                ("skill_library", self.skill_library),
-                ("tool_registry", ToolRegistry.get_instance()),
-            ]:
-                if hasattr(inst, attr):
-                    try:
-                        setattr(inst, attr, val)
-                    except Exception:
-                        pass
-            return inst
+        return self.registry.get(agent_id)

@@ -1210,7 +1210,7 @@ def cmd_agent(args, mgr) -> int:
         mode_str = getattr(args, "mode", None)
         mode = TM[mode_str] if mode_str else None
         try:
-            reply = orch.chat(
+            reply = orch.chat_legacy(
                 session_id=args.session,
                 user_message=args.message,
                 mode=mode,
