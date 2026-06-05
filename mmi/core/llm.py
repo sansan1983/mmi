@@ -625,8 +625,119 @@ class AnthropicLLMProvider(LLMProvider):
         raise LLMError("Anthropic chat: no text in response")
 
     def stream_chat(self, messages, *, max_tokens=4096, temperature=0.7):
-        """Anthropic 简化流式:不做 SSE 解析,直接 yield 整段。"""
-        yield self.chat(messages, max_tokens=max_tokens, temperature=temperature)
+        """Anthropic 真 SSE 流式(DeepSeek / MiniMax 用 Anthropic 端点时也走这路径)。
+
+        R8.5.2:替换原 fake 实现(只 yield 整段 chat 响应)。
+
+        协议(SSE):
+          event: message_start
+          event: content_block_start
+          event: content_block_delta
+            data: {"type":"content_block_delta","index":N,
+                   "delta":{"type":"text_delta","text":"Hello"}}
+          event: content_block_stop
+          event: message_delta
+          event: message_stop
+
+        实现要点:
+          - 用 httpx.Client.stream("POST", url) 流式读 body
+          - 解析 SSE 协议:`event:` 行 + `data:` 行配对(`\n\n` 分隔)
+          - 只 yield `content_block_delta.delta.text`(text_delta 类型)
+          - 错误处理:HTTPStatusError 转 LLMError(再被 stream_chat_with_retry 抓)
+          - 中流网络/解析错误包成 StreamError
+          - 不发 stream_options(Anthropic 协议无此概念)
+
+        Yields:
+            文本片段(每个 content_block_delta.text 一段)
+        """
+        from mmi.core.exceptions import StreamError
+        import httpx
+        import json as _json
+
+        # 构造 payload(同 chat())
+        system_parts: list[str] = []
+        user_msgs: list[dict] = []
+        for m in messages:
+            role = m.get("role")
+            content = m.get("content") or ""
+            if role == "system":
+                system_parts.append(content)
+            else:
+                user_msgs.append({"role": role, "content": content})
+        payload: dict = {
+            "model": self.model,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "messages": user_msgs,
+            "stream": True,
+        }
+        if system_parts:
+            payload["system"] = "\n\n".join(system_parts)
+
+        url = f"{self.base_url}/v1/messages"
+        headers = {
+            "x-api-key": self.api_key,
+            "anthropic-version": self.anthropic_version,
+            "Content-Type": "application/json",
+        }
+
+        try:
+            with self._client.stream("POST", url, headers=headers, json=payload) as resp:
+                if resp.status_code >= 400:
+                    body = resp.read().decode("utf-8", errors="replace")[:300]
+                    raise LLMError(
+                        f"Anthropic stream HTTP {resp.status_code}: {body}"
+                    )
+                # 解析 SSE — 状态机
+                current_event = ""
+                data_buf: list[str] = []
+                for raw_line in resp.iter_lines():
+                    line = raw_line if isinstance(raw_line, str) else raw_line.decode("utf-8", errors="replace")
+                    if not line:
+                        # 空行 = event 边界,处理累积的 event
+                        if data_buf:
+                            data_text = "\n".join(data_buf)
+                            # 只关心 content_block_delta 里的 text_delta
+                            if current_event == "content_block_delta":
+                                try:
+                                    evt = _json.loads(data_text)
+                                    delta = evt.get("delta") or {}
+                                    if delta.get("type") == "text_delta":
+                                        text = delta.get("text") or ""
+                                        if text:
+                                            yield text
+                                except _json.JSONDecodeError:
+                                    pass  # 忽略解析失败的 chunk
+                            data_buf = []
+                            current_event = ""
+                        continue
+                    if line.startswith(":"):
+                        # SSE 注释,忽略
+                        continue
+                    if line.startswith("event:"):
+                        current_event = line[len("event:"):].strip()
+                    elif line.startswith("data:"):
+                        data_buf.append(line[len("data:"):].lstrip())
+                # 流结束,处理最后一批(若有)
+                if data_buf and current_event == "content_block_delta":
+                    data_text = "\n".join(data_buf)
+                    try:
+                        evt = _json.loads(data_text)
+                        delta = evt.get("delta") or {}
+                        if delta.get("type") == "text_delta":
+                            text = delta.get("text") or ""
+                            if text:
+                                yield text
+                    except _json.JSONDecodeError:
+                        pass
+        except LLMError:
+            raise
+        except (httpx.TimeoutException, httpx.ConnectError, ConnectionError) as e:
+            # 网络错误:LLMError,让上层 stream_chat_with_retry 区分 pre/mid-stream
+            raise LLMError(f"Anthropic stream network error: {e}") from e
+        except Exception as e:
+            # 中流其它错误(解析 / 未知):包成 StreamError
+            raise StreamError(f"Anthropic stream error: {e}") from e
 
     def classify(self, prompt, *, options) -> Classification:
         if not options:
