@@ -87,39 +87,52 @@ class Validator:
         if self._use_llm_deep_audit and intent in self._high_risk_intents:
             return self._llm_deep_audit(text, intent)
 
-        return ValidationResult(passed=True, reasons=[])
+        return ValidationResult(passed=True, issues=())
 
     def _check_rules(self, text: str) -> ValidationResult:
         """Run the fast rule engine.
 
-        3.4 改进:每条 rule 跑完把失败原因加进 reasons(之前没 min_length 检查)。
+        3.4 改进:每条 rule 跑完把失败原因加进 issues(之前没 min_length 检查)。
+        4.3 改进:issues 是 ValidationIssue tuple(占位,只含 message)。
         """
-        reasons: list[str] = []
+        messages: list[str] = []
         for rule in self._rules:
             # Length check (max)
             if rule.max_length is not None and len(text) > rule.max_length:
-                reasons.append(f"[{rule.name}] Output exceeds max length {rule.max_length}")
+                messages.append(f"[{rule.name}] Output exceeds max length {rule.max_length}")
 
             # Length check (min) — 3.4 新增
             if rule.min_length is not None and len(text.strip()) < rule.min_length:
-                reasons.append(
+                messages.append(
                     f"[{rule.name}] {rule.min_length_error} (got {len(text.strip())} chars)"
                 )
 
             # Required substrings
             for sub in rule.required_substrings:
                 if sub not in text:
-                    reasons.append(f"[{rule.name}] Missing required substring: {sub!r}")
+                    messages.append(f"[{rule.name}] Missing required substring: {sub!r}")
 
             # Negative regex
             if rule.pattern is not None and re.search(rule.pattern, text):
-                reasons.append(f"[{rule.name}] Output matches prohibited pattern: {rule.pattern!r}")
+                messages.append(f"[{rule.name}] Output matches prohibited pattern: {rule.pattern!r}")
 
-        return ValidationResult(passed=len(reasons) == 0, reasons=reasons)
+        issues = tuple(ValidationIssue(message=m) for m in messages)
+        return ValidationResult(passed=len(issues) == 0, issues=issues)
 
     def _llm_deep_audit(self, text: str, intent: IntentType) -> ValidationResult:
         """Call LLM for nuanced safety / quality audit."""
         raise NotImplementedError("LLM deep audit not yet integrated")
+
+
+@dataclass
+class ValidationIssue:
+    """Single structured validation issue (R7 4.3 引入,本任务占位)。
+
+    R8 4.10 会扩展为带 severity/category/offset 等字段。当前是 placeholder,
+    ChatResult.to_dict() 通过 asdict 序列化时按本类的字段展开。
+    """
+
+    message: str = ""
 
 
 @dataclass
@@ -129,8 +142,9 @@ class ValidationResult:
     passed: bool
     """True when all checks passed."""
 
-    reasons: list[str] = field(default_factory=list)
+    issues: tuple[ValidationIssue, ...] = field(default_factory=tuple)
     """Human-readable list of failure reasons. Empty when ``passed=True``."""
+
 
 
 # --------------------------------------------------------------------------

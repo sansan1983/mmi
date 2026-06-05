@@ -33,9 +33,13 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import AsyncIterator
+from typing import TYPE_CHECKING, AsyncIterator
+
+if TYPE_CHECKING:
+    from mmi.agent.result import ChatResult
 
 __all__ = [
     "LLMProvider",
@@ -156,6 +160,75 @@ class LLMProvider(ABC):
         )
         # 让类型检查器满意（async generator 必须有 yield）
         yield ""  # pragma: no cover
+
+    # ---- 4.3 重试 ---------------------------------------------------------
+
+    def chat_with_retry(
+        self,
+        messages: list[dict],
+        *,
+        max_attempts: int = 3,
+        base_delay: float = 0.5,
+    ) -> "ChatResult":
+        """指数退避重试 chat()。
+
+        可重试异常:
+          - httpx.TimeoutException / httpx.ConnectError / ConnectionError (网络)
+          - httpx.HTTPStatusError 5xx / 429 (服务端临时错误)
+
+        不可重试(直接 raise):
+          - httpx.HTTPStatusError 4xx(除 429 外的客户端错误)
+          - 其它 LLMError
+
+        Args:
+            messages: 同 chat()
+            max_attempts: 最大尝试次数,默认 3
+            base_delay: 退避基数,attempt=N 的退避是 base_delay * 2^(N-1)
+
+        Returns:
+            ChatResult(reply=..., attempts=N),N 是成功的那次
+
+        Raises:
+            LLMRetryExhausted: 重试 N 次后仍失败
+            httpx.HTTPStatusError: 4xx 直接抛
+        """
+        import httpx
+
+        from mmi.agent.result import ChatResult
+        from mmi.core.exceptions import LLMRetryExhausted
+
+        last_error: Exception | None = None
+        for attempt in range(1, max_attempts + 1):
+            try:
+                text = self.chat(messages)
+                return ChatResult(
+                    reply=text,
+                    intent=None,  # 顶层 chat 不分类 intent
+                    agent_id="",
+                    validation=None,
+                    trace_ids=[],
+                    attempts=attempt,
+                )
+            except (httpx.TimeoutException, httpx.ConnectError, ConnectionError) as e:
+                last_error = e
+                if attempt < max_attempts:
+                    time.sleep(base_delay * (2 ** (attempt - 1)))
+            except httpx.HTTPStatusError as e:
+                status = e.response.status_code
+                if status >= 500 or status == 429:
+                    last_error = e
+                    if attempt < max_attempts:
+                        time.sleep(base_delay * (2 ** (attempt - 1)))
+                else:
+                    raise
+        raise LLMRetryExhausted(attempts=max_attempts, last_error=last_error)
+
+
+# ---------------------------------------------------------------------------
+# 向后兼容别名(R7 plan 文档里把类叫 LLM,实际实现是 LLMProvider)
+# ---------------------------------------------------------------------------
+
+LLM = LLMProvider
 
 
 # ---------------------------------------------------------------------------

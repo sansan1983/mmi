@@ -120,14 +120,14 @@ def test_validator_dangerous_token_caught():
     v = Validator()
     r = v.check('password = "secret123"', IntentType.QA)
     assert not r.passed
-    assert any("dangerous" in s for s in r.reasons)
+    assert any("dangerous" in i.message for i in r.issues)
 
 
 def test_validator_too_short_caught():
     v = Validator()
     r = v.check("a", IntentType.QA)
     assert not r.passed
-    assert any("too short" in s for s in r.reasons)
+    assert any("too short" in i.message for i in r.issues)
 
 
 def test_validator_dangerous_phrase_caught():

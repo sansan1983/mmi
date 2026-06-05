@@ -126,7 +126,7 @@ class Orchestrator:
             # 4) 验证
             result = self.validator.check(reply, intent)
             if not result.passed:
-                log.warning("Validation failed for %s: %s", agent_id, result.reasons)
+                log.warning("Validation failed for %s: %s", agent_id, [i.message for i in result.issues])
                 self.tracer.record(TraceRecord(
                     trace_id="",
                     session_id=session_id,
