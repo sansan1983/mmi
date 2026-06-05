@@ -372,7 +372,11 @@ def cmd_chat(args, mgr) -> int:
             if stripped in ("q", "quit", "exit"):
                 break
 
-            result = mgr.chat(sid, stripped)
+            try:
+                result = mgr.chat(sid, stripped)
+            except storage.SessionNotFound:
+                print(i18n.t("chat.session_trashed"))
+                break
             # 注意：这里显示给用户的 ≠ 送进 LLM 的（Phase 3 走 loader 修剪）
             print(i18n.t("chat.assistant_said", content=result.reply))
             if result.trashed:
@@ -493,7 +497,11 @@ def cmd_export(args, mgr) -> int:
             if stripped in ("q", "quit", "exit"):
                 break
 
-            result = mgr.chat(sid, stripped)
+            try:
+                result = mgr.chat(sid, stripped)
+            except storage.SessionNotFound:
+                print(i18n.t("chat.session_trashed"))
+                break
             # 注意：这里显示给用户的 ≠ 送进 LLM 的（Phase 3 走 loader 修剪）
             print(i18n.t("chat.assistant_said", content=result.reply))
             if result.trashed:
@@ -1056,6 +1064,8 @@ def _config_wizard(args) -> int:
                     else provider.base_url
                 ),
             )
+            # 🐛 修复: replace 后同步局部变量,否则配置写入旧 base_url
+            base_url = provider.base_url
         else:
             api_style = provider.preferred_api_style
             print(f"  (单协议: {api_style})")

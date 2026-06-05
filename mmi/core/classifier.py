@@ -124,13 +124,26 @@ def classify_session(
             _build_prompt(turns, language=language),
             options=["yes", "no"],
         )
-        if result.choice == "no" or result.confidence < CONFIDENCE_THRESHOLD:
+        if result.choice == "no":
             return ClassificationResult(
                 verdict=Verdict.IS_TRASH,
                 reason=(
                     f"llm: choice={result.choice}, "
                     f"confidence={result.confidence:.2f} "
                     f"(threshold {CONFIDENCE_THRESHOLD})"
+                ),
+                confidence=result.confidence,
+                method="llm",
+            )
+        # choice == "yes": LLM 判为正经会话；即使置信度偏低也保留（不要误删活跃会话）
+        if result.confidence < CONFIDENCE_THRESHOLD:
+            return ClassificationResult(
+                verdict=Verdict.IS_REAL,
+                reason=(
+                    f"llm: choice={result.choice}, "
+                    f"confidence={result.confidence:.2f} "
+                    f"(below threshold {CONFIDENCE_THRESHOLD}, "
+                    f"but choice=yes so keeping)"
                 ),
                 confidence=result.confidence,
                 method="llm",

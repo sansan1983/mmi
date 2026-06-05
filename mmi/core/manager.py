@@ -308,7 +308,7 @@ class SessionManager:
 
         # 2) 调 LLM（失败时降级：错误信息作为 reply，不抛给 UI）
         try:
-            reply = self.llm.chat(messages, max_tokens=512, temperature=0.7)
+            reply = self.llm.chat(messages, max_tokens=4096, temperature=0.7)
         except LLMError as e:
             reply = f"[LLM error: {e}]"
 
