@@ -20,6 +20,10 @@ from mmi.core.llm import LLMProvider
 from tests._fakes import ScriptedLLM
 
 
+# R9 9.1: test_cli.py 已归档,加保险防止后续被恢复时跑出 ctrim 路径错误
+collect_ignore_glob = ["test_cli.py"]
+
+
 # ---------------------------------------------------------------------------
 # isolated_home
 # ---------------------------------------------------------------------------

@@ -1,3 +1,13 @@
+# [DEPRECATED] ctrim 旧 CLI 测试快照
+
+> 归档时间:2026-06-06(R9 9.1)
+> 归档原因:R8.5.1 已 ruff-fix 清 0,本仓 mmi CLI 已完全替换 ctrim 旧实现。
+> 当前 ctrim 历史已全部入 `docs/history/`,本快照只留作 R0 时期的接口参考。
+
+> 原始路径:`tests/test_cli.py`
+> 原始内容(整文件复制,无改动):
+
+```python
 """Round 0.8: CLI rename + info tests (pytest风格验证脚本)。"""
 import subprocess
 import sys
@@ -109,3 +119,15 @@ if __name__ == "__main__":
     print(f"\n{'='*50}")
     print(f"Result: {passed}/{len(tests)} passed")
     sys.exit(0 if passed == len(tests) else 1)
+```
+
+## 为什么归档(不删)
+- R0-R3 时期 mmi 借调 ctrim 旧 CLI 来跑 e2e
+- R5 后 mmi CLI(`mmi/cli.py`)完全独立,不再依赖 ctrim
+- 文件硬编码 `/home/ubuntu/ctrim/.venv/bin/python` 等 ctrim 路径,跟 mmi 完全无关
+- ruff --fix 在 R8.5.1 已经把测试清 0,但文件本身仍载着死代码,定期 rerun 浪费时间
+
+## 接手者
+- 本快照只用于"为什么删"考古
+- 不要恢复使用
+- ctrim 旧代码本身已归档:`docs/history/ctrim-*.md`
