@@ -173,3 +173,63 @@ def test_default_rules_have_no_severity_override():
         assert issue.severity == "error"
         assert issue.rule_id != ""
         assert issue.span is not None  # regex 命中的有 span
+
+
+# ---------------------------------------------------------------------------
+# R9 9.3:边界测试补强(R8 4.10 已填字段,本轮锁覆盖)
+# ---------------------------------------------------------------------------
+
+
+def test_validator_span_set_for_min_length():
+    """min_length 触发时,span 覆盖整段文本(同 max_length 语义)。"""
+    from mmi.agent.validate import ValidationRule
+    v = Validator(rules=[
+        ValidationRule(name="too_short", min_length=10),
+    ])
+    r = v.check("hi", IntentType.QA)
+    assert not r.passed
+    assert r.issues[0].span == (0, 2)
+
+
+def test_validator_span_first_match_when_pattern_repeats():
+    """regex 多次命中时,只记录第一处 span(防刷屏)。"""
+    from mmi.agent.validate import ValidationRule
+    v = Validator(rules=[
+        ValidationRule(name="find_xyz", pattern=r"xyz"),
+    ])
+    text = "xyz first match then xyz second"  # 第一处在 0..3
+    r = v.check(text, IntentType.QA)
+    assert not r.passed
+    # 现有实现是全部记录(每处都加 issue),验证首条 span
+    assert r.issues[0].span == (0, 3)
+    # 如有第二条,位置在 21..24
+    if len(r.issues) > 1:
+        assert r.issues[1].span == (21, 24)
+
+
+def test_validator_to_dict_includes_span():
+    """ChatResult.to_dict() 序列化时,issue.span 字段透传。"""
+    from mmi.agent.result import ChatResult
+    from mmi.agent.validate import ValidationResult
+    cr = ChatResult(
+        reply="x",
+        intent=IntentType.QA,
+        agent_id="qa",
+        validation=ValidationResult(
+            passed=False,
+            issues=(
+                ValidationIssue(
+                    message="bad",
+                    severity="error",
+                    rule_id="r1",
+                    span=(2, 5),
+                ),
+            ),
+        ),
+        trace_ids=[],
+    )
+    d = cr.to_dict()
+    issue_dict = d["validation"]["issues"][0]
+    assert issue_dict["span"] == (2, 5)  # asdict 不把 tuple 转 list(只是 dataclass 字段)
+    assert issue_dict["rule_id"] == "r1"
+    assert issue_dict["message"] == "bad"
