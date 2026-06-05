@@ -89,13 +89,20 @@ class ValidateStep(PipelineStep):
     on_error: str = "degrade"
     validator: "Validator | None" = None
     event_bus: "EventBus | None" = None  # R8 4.9 引入:可注入
+    # R9 9.2:节流配置
+    issue_batch_threshold: int = 5
+    """issues 数量 > 此值时改 publish 'validation.issue_batch' 单条事件,
+    而不是逐 issue publish 'validation.issue'。"""
+    force_individual: bool = False
+    """强制逐条 publish(给调试 / 排错场景,绕过阈值)。"""
 
     def run(self, ctx: PipelineCtx) -> PipelineCtx:
         if self.validator is None:
             raise RuntimeError("ValidateStep.validator not set")
         reply = ctx.reply or ""
         ctx.validation = self.validator.check(reply, ctx.intent)
-        # R8 4.9:完成后 publish 'validation.complete' + 每条 issue 单独 publish
+        # R8 4.9 + R9 9.2:完成后 publish 'validation.complete' +
+        # 按阈值决定逐 issue publish 或合并 publish batch
         if self.event_bus is not None:
             from mmi.agent.event_bus import Event
             self.event_bus.publish(Event(
@@ -107,16 +114,38 @@ class ValidateStep(PipelineStep):
                     "issue_count": len(ctx.validation.issues),
                 },
             ))
-            for issue in ctx.validation.issues:
+            n = len(ctx.validation.issues)
+            if self.force_individual or n <= self.issue_batch_threshold:
+                # 阈值下 / 强制:逐条 publish
+                for issue in ctx.validation.issues:
+                    self.event_bus.publish(Event(
+                        name="validation.issue",
+                        timestamp=time.time(),
+                        payload={
+                            "session_id": ctx.session_id,
+                            "rule_id": issue.rule_id,
+                            "severity": issue.severity,
+                            "message": issue.message,
+                            "span": list(issue.span) if issue.span is not None else None,
+                        },
+                    ))
+            else:
+                # 超阈值:合并 publish batch
                 self.event_bus.publish(Event(
-                    name="validation.issue",
+                    name="validation.issue_batch",
                     timestamp=time.time(),
                     payload={
                         "session_id": ctx.session_id,
-                        "rule_id": issue.rule_id,
-                        "severity": issue.severity,
-                        "message": issue.message,
-                        "span": list(issue.span) if issue.span is not None else None,
+                        "count": n,
+                        "issues": [
+                            {
+                                "rule_id": i.rule_id,
+                                "severity": i.severity,
+                                "message": i.message,
+                                "span": list(i.span) if i.span is not None else None,
+                            }
+                            for i in ctx.validation.issues
+                        ],
                     },
                 ))
         return ctx
