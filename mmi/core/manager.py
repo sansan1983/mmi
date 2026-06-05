@@ -17,6 +17,7 @@ Phase 3 范围（ARCHITECTURE.md §9 Phase 3）：
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 from . import classifier as cls_module
@@ -26,7 +27,9 @@ from . import storage
 from . import summarizer
 from . import titler
 from .llm import LLMError, LLMProvider, get_default_provider
-from .session import DEFAULT_TITLE, Session, SessionMeta, new_session_id
+from mmi.core.session import DEFAULT_TITLE, Session, SessionMeta, new_session_id
+
+log = logging.getLogger(__name__)
 
 __all__ = [
     "SessionManager",
@@ -106,6 +109,57 @@ class SessionManager:
         """
         storage.read_meta(session_id)  # 验证存在
         storage.update_access(session_id)
+
+    def get_session_meta(self, session_id: str) -> SessionMeta:
+        """读单个会话的 frontmatter(SessionMeta)。
+
+        与 get() 区别:get() 读全文(frontmatter+body),本方法只读 frontmatter,
+        适合批量列表/预览场景(轻量)。
+
+        Raises:
+            SessionNotFound: 会话不存在
+        """
+        return storage.read_meta(session_id)
+
+    def batch_touch(self, session_ids: list[str]) -> None:
+        """批量 touch,单条失败只 log 不阻塞。"""
+        for sid in session_ids:
+            try:
+                self.touch(sid)
+            except Exception:
+                log.exception("batch_touch failed for %s", sid)
+
+    def batch_get_meta(self, session_ids: list[str]) -> dict[str, object]:
+        """批量拉 meta,不存在的 sid 跳过(不抛 KeyError)。"""
+        out: dict[str, object] = {}
+        for sid in session_ids:
+            try:
+                out[sid] = self.get_session_meta(sid)
+            except KeyError:
+                continue
+            except Exception:
+                log.exception("batch_get_meta failed for %s", sid)
+        return out
+
+    def batch_chat(self, items: list[tuple[str, str]]) -> list["ChatResult"]:
+        """顺序执行 chat(),单条抛错不阻塞其它(返 ChatResult 带 error)。"""
+        from mmi.agent.result import ChatResult as _ChatResult
+        from mmi.agent.router import IntentType
+        out: list[_ChatResult] = []
+        for sid, msg in items:
+            try:
+                out.append(self.orchestrator.chat(sid, msg))
+            except Exception as e:
+                log.exception("batch_chat item failed: sid=%s", sid)
+                out.append(_ChatResult(
+                    reply="",
+                    intent=IntentType.UNKNOWN,
+                    agent_id="",
+                    validation=None,
+                    trace_ids=[],
+                    error=str(e),
+                ))
+        return out
 
     def list_sessions(self, limit: int = 10) -> list[SessionMeta]:
         """返回前 N 个会话（Phase 4：按 heat 降序，同分时按 last_access 倒序）。

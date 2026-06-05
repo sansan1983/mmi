@@ -62,7 +62,7 @@ class ScriptedLLM(LLMProvider):
     def classify(self, prompt, *, options) -> Classification:
         return Classification(choice=options[0], confidence=0.99)
 
-    async def stream_chat(self, messages, *, max_tokens=512, temperature=0.7):
+    def stream_chat(self, messages, *, max_tokens=512, temperature=0.7):
         if not self._support_stream:
             raise NotImplementedError("scripted LLM without stream support")
         self.last_messages = list(messages)

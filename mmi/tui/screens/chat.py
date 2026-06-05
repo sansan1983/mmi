@@ -279,11 +279,18 @@ class ChatScreen(Screen):
             # 先调一次 sync chat 拿 reply（流式仅影响 UI 渲染；core 仍走 chat 持久化）
             # Phase 5 简化：TUI 走 stream 路径，回复用 chat 持久化（保持 body 不变）
             try:
-                # 走真流式
+                # 走真流式(同步迭代器,放到后台线程跑以免阻塞事件循环;
+                # 当前实现是 collect-all-in-list,后期再优化成 chunk-by-chunk yield)
                 chat_log.append_assistant_start()
-                ait = app.mgr.llm.stream_chat(messages, max_tokens=512, temperature=0.7)
+                chunks = await asyncio.to_thread(
+                    lambda: list(
+                        app.mgr.llm.stream_chat(
+                            messages, max_tokens=512, temperature=0.7
+                        )
+                    )
+                )
                 buf: list[str] = []
-                async for chunk in ait:
+                for chunk in chunks:
                     buf.append(chunk)
                     chat_log.append_assistant_chunk(chunk)
                 chat_log.append_assistant_done("".join(buf))

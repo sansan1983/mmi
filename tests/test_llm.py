@@ -289,54 +289,33 @@ def _make_streaming_provider(chunks: list[str]) -> OpenAILLMProvider:
 
 
 def test_echo_stream_chat_sync_wrapper():
-    """Echo 流式（同步入口）：用 asyncio.run 跑 async generator。"""
-    import asyncio
+    """Echo 流式(同步入口):用 list() 跑同步 generator。"""
     from mmi.core.llm import EchoLLMProvider
 
-    async def _collect():
-        gen = EchoLLMProvider().stream_chat([{"role": "user", "content": "hi"}])
-        out = []
-        async for c in gen:
-            out.append(c)
-        return out
-
-    assert asyncio.run(_collect()) == ["[echo] hi"]
+    out = list(EchoLLMProvider().stream_chat([{"role": "user", "content": "hi"}]))
+    assert out == ["[echo] hi"]
 
 
 def test_openai_stream_chat_sync_wrapper():
-    """OpenAI 流式（同步入口）：分片正确拼接。"""
+    """OpenAI 流式(同步入口):分片正确拼接。"""
     p = _make_streaming_provider(["Hello", ", ", "world!"])
-    import asyncio
-
-    async def _collect():
-        out = []
-        async for c in p.stream_chat([{"role": "user", "content": "x"}]):
-            out.append(c)
-        return out
-
-    assert asyncio.run(_collect()) == ["Hello", ", ", "world!"]
+    out = list(p.stream_chat([{"role": "user", "content": "x"}]))
+    assert out == ["Hello", ", ", "world!"]
 
 
-def test_stream_chat_default_raises_not_implemented():
-    """基类 LLMProvider.stream_chat 默认抛 NotImplementedError。"""
-    import asyncio
+def test_stream_chat_default_via_chat():
+    """基类 LLMProvider.stream_chat 默认走 chat() 拆单 chunk。"""
     from mmi.core.llm import LLMProvider, Classification
 
-    class _NoStream(LLMProvider):
-        name = "no-stream"
+    class _ChatOnly(LLMProvider):
+        name = "chat-only"
 
         def chat(self, messages, **kw):
-            return "x"
+            return "stub-reply"
 
         def classify(self, prompt, *, options):
             return Classification(choice=options[0], confidence=0.5)
 
-    p = _NoStream()
-
-    async def _drain():
-        gen = p.stream_chat([{"role": "user", "content": "x"}])
-        async for _ in gen:
-            pass
-
-    with pytest.raises(NotImplementedError, match="does not support stream_chat"):
-        asyncio.run(_drain())
+    p = _ChatOnly()
+    out = list(p.stream_chat([{"role": "user", "content": "x"}]))
+    assert out == ["stub-reply"]

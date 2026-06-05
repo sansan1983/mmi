@@ -355,7 +355,7 @@ def test_orchestrator_chat_end_to_end(isolated_home):
     reg.register(AgentMeta(agent_id="code_review", name="Code Review", builtin=True), CodeReviewAgent)
     orch = Orchestrator(manager=mgr, llm=llm, registry=reg)
 
-    reply = orch.chat(sid, "audit security", mode=ThinkingMode.AUDIT)
+    reply = orch.chat_legacy(sid, "audit security", mode=ThinkingMode.AUDIT)
     assert isinstance(reply, str)
     assert "未注册" not in reply
     s = storage.read_session(sid)

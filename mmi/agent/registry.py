@@ -103,6 +103,52 @@ class AgentRegistry:
         entry = self._agents.get(agent_id)
         return entry[1] if entry else None
 
+    def get(self, agent_id: str) -> "BaseAgent | None":
+        """Return an instantiated agent for *agent_id*, or None if not found.
+
+        R7 4.2 引入:Pipeline.InstantiateStep 直接调这个,无需 Orchestrator 包一层。
+        构造时尝试常见签名 ``(llm=, skill_library=, tool_registry=)``;
+        失败则无参构造 + setattr(子类签名不兼容时兜底)。
+        """
+        from mmi.agent.tools import ToolRegistry
+
+        agent_cls = self.match(agent_id)
+        if agent_cls is None:
+            return None
+        llm = getattr(self, "_default_llm", None)
+        skill_library = getattr(self, "_default_skill_library", None)
+        tool_registry = ToolRegistry.get_instance()
+        try:
+            return agent_cls(
+                llm=llm,
+                skill_library=skill_library,
+                tool_registry=tool_registry,
+            )
+        except TypeError:
+            try:
+                inst = agent_cls()
+            except Exception:
+                return None
+            for attr, val in [
+                ("llm", llm),
+                ("skill_library", skill_library),
+                ("tool_registry", tool_registry),
+            ]:
+                if hasattr(inst, attr):
+                    try:
+                        setattr(inst, attr, val)
+                    except Exception:
+                        pass
+            return inst
+
+    def set_default_llm(self, llm: object) -> None:
+        """R7 4.2 引入:让 .get() 构造时用这个 llm(由 Orchestrator 注入)。"""
+        self._default_llm = llm
+
+    def set_default_skill_library(self, skill_library: object) -> None:
+        """R7 4.2 引入:让 .get() 构造时用这个 skill_library(由 Orchestrator 注入)。"""
+        self._default_skill_library = skill_library
+
     def get_meta(self, agent_id: str) -> AgentMeta | None:
         """Return metadata for *agent_id*, or None if not found."""
         entry = self._agents.get(agent_id)
