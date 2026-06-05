@@ -1,6 +1,11 @@
 """mmi.core.providers —— 预置模型商 catalog + 工厂。
 
-5 个国内商 + 1 个自定义(后续要扩海外商再补)。
+4 个国内商 + 1 个自定义(后续要扩海外商再补)。
+
+R8.5.3 收口:Kimi (moonshot) 从预置移除 — 官方文档没公布 temperature / top_p 等参数,
+  跟 OpenAILLMProvider 的统一参数 schema 不匹配(报告 §3 / B1-B3 3 项估算工时)。
+  需要 Kimi 仍可用:走自定义选项 — `mmi config` 时选 '自定义',手填 base_url + api_key
+  + 选 'openai' 协议(注意 max_tokens 用 `max_completion_tokens` 替代)。
 
 API 风格:多数国内商只有 OpenAI 兼容;DeepSeek 和 MiniMax 同时支持
 Anthropic 协议。`preferred_api_style` 标首选风格,model_fetcher 优先用
@@ -11,8 +16,8 @@ API 文档来源(各商官方 docs,2026-06 验证):
               Anthropic 端点:https://api.deepseek.com/anthropic
   MiniMax:   https://api.minimaxi.com/anthropic
   智谱 GLM:  https://open.bigmodel.cn/dev/api
-  Kimi:      https://platform.moonshot.cn/docs/intro
   Qwen:      https://help.aliyun.com/zh/model-studio/developer-reference/
+  (Kimi 移出预置,见上;要用走自定义:https://platform.moonshot.cn/docs/intro)
 """
 
 from __future__ import annotations
@@ -76,15 +81,6 @@ PROVIDERS: tuple[ProviderInfo, ...] = (
         base_url="https://open.bigmodel.cn/api/paas/v4",
         api_key_url="https://bigmodel.cn/user-center/apikeys",
         api_key_env="GLM_API_KEY",
-        notes="OpenAI 兼容",
-    ),
-    ProviderInfo(
-        id="moonshot",
-        name="Moonshot (Kimi)",
-        preferred_api_style="openai",
-        base_url="https://api.moonshot.cn/v1",
-        api_key_url="https://platform.moonshot.cn/console/api-keys",
-        api_key_env="MOONSHOT_API_KEY",
         notes="OpenAI 兼容",
     ),
     ProviderInfo(
