@@ -1,13 +1,72 @@
-# 工作日志 — 三期 Agent 最小可用
-> Phase: 三期 | Round: 6
-> 标题：多 Agent 调度(PLAN.md 三期 3.1–3.12)
-> 开始：2026-06-05
-> 状态：✅ 已完成
+# 工作日志 — 四期 架构加固 R7(部分收口)
+> Phase: 四期 | Round: 7
+> 标题:R7 核心 6 项(Task 1-3 已合并,4-6 待续)
+> 开始:2026-06-05
+> 状态:🟡 部分收口
 
 ## 上轮交接摘要
-- 改进 Round 3(R5)完成:增量摘要 + FAISS 池化 + 简化版热度
-- 测试 439/439,ruff 0 error
-- 下轮:三期 3.0 多 Agent 调度(本轮)
+- 三期 R6 完成:Agent 最小可用,3.1-3.12 全清
+- 测试 466/466,ruff 44 errors(baseline)
+
+## 本轮完成(R7 6 项中 4 项落地)
+- [x] 4.3 LLM 重试 + 4.5 ChatResult(Task 1)
+- [x] 4.1 EventBus(Task 2)
+- [x] 4.2 Pipeline 容器 + 6 内建 Step(Task 3)
+- [x] ValidationResult.reasons → issues 字段迁移(原 R8 4.10,提前到本轮减少后续改动)
+- [x] `LLM = LLMProvider` 向后兼容别名
+- [ ] 4.4 LLM stream_chat(Task 5,待续)
+- [ ] 4.6 Manager 批量(Task 6,待续)
+- [ ] Orchestrator 改走 Pipeline(Task 4,待续)
+- [ ] R7 完整收口文档 + 索引更新(部分)
+
+## 执行记录
+| 时间 | 任务 | 结果 | 备注 |
+|---|---|---|---|
+| 上午 | spec + R7 plan + self-review | ✅ | 2 个 commit,落在 master |
+| 中午 | worktree 建 r7/phase4-core | ✅ | /home/ubuntu/mmi-r7 |
+| 中午 | Task 1 subagent | ✅ | 1 个 fix subagent(ValidationResult 字段冲突)后通过,475 passed |
+| 下午 | Task 2 subagent | ✅ | 482 passed |
+| 下午 | Task 3 subagent | ✅ | 5 处 plan 偏差已审,489 passed |
+| 下午 | 用户决定先合并暂停 | ✅ | ff-merge 3 commit 到 master,489 passed 在 master 验证 |
+
+## 测试结果
+- master 状态:**489 passed**(466 baseline + 23 net new)
+- ruff:**44 errors**(同 baseline,无新增)
+- R7 剩余:Task 4-6 + 收口估 ~9 net new → 全量 498
+
+## 改动文件清单(Task 1-3 总和)
+- mmi/agent/event_bus.py(新,45 行)
+- mmi/agent/pipeline.py(新,181 行)
+- mmi/agent/result.py(新,45 行)
+- mmi/agent/steps.py(新,125 行)
+- mmi/agent/validate.py(改,32 行差分)
+- mmi/agent/orchestrator.py(改,2 行)
+- mmi/agent/__init__.py(改,+25 行)
+- mmi/core/exceptions.py(新,23 行)
+- mmi/core/llm.py(改,+75 行)
+- tests/test_chat_result.py / test_event_bus.py / test_llm_retry.py / test_pipeline.py(新)
+- tests/test_agent_phase3.py(改 2 处,跟新字段对齐)
+- docs/handover-history/round_7_phase4_core.md(新,部分收口)
+- docs/handover-history/INDEX.md(+ round_7 行)
+- docs/INDEX.md(四期状态 ⬜ → 🟡)
+
+## 关键设计决策
+- LLM 重试自写,不用 tenacity(零依赖、可控、好测)
+- `ValidationResult.reasons` → `issues` 提前到 R7,R8 4.10 不再做字段重命名
+- `class LLM` → `LLMProvider` + `LLM = LLMProvider` 兼容别名
+- Pipeline `degrade` 策略语义 = 失败重试 1 次(plan 测试期望)
+- `ChatResult.intent` 在 `chat_with_retry` 里是 `None`,由 Pipeline.RunStep 在装配时填
+
+## 遗留问题
+- Orchestrator 没切到 Pipeline(下一步 Task 4)
+- LLMProvider.stream_chat 没实现(下一步 Task 5)
+- Manager.batch_* 没实现(下一步 Task 6)
+- Tracer 没接 EventBus(下一步或 R8)
+
+## 下次续做
+- Task 4 → Task 5 → Task 6 → R7 完整收口
+- 然后写 R8 plan(4.7 LRU + 4.8/4.9 Router + 4.10 ValidationIssue 内部结构扩展)
+- 预计 R7 收口后:498 passed,test_cli.py 仍硬编码路径留待归档
 
 ## 本轮计划子任务
 - [x] 3.1 BaseAgent 接口协议
