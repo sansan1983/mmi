@@ -85,6 +85,38 @@ def _handle_request(request: dict[str, Any]) -> None:
         anyio.run(_run)  # run async loop in this (sync) thread; output is line-buffered
         return
 
+    if method == "set_config":
+        # Persist arbitrary dotted keys into ~/.mmi/config.toml. The real
+        # mmi.core.config API is save_config(dict)/load_config() — there is no
+        # generic `set(key, value)` that takes dotted keys, so we expand
+        # "tui.theme" -> {"tui": {"theme": ...}} and merge with existing cfg.
+        # Spec note: original draft assumed `cfg_module.set(key, value)`; that
+        # helper does not exist, so we do the merge here.
+        from . import config as cfg_module
+        cfg = cfg_module.load_config()
+        for dotted_key, value in params.items():
+            parts = dotted_key.split(".")
+            if not parts or not all(parts):
+                _write_response({
+                    "jsonrpc": "2.0",
+                    "id": req_id,
+                    "error": {"code": -32602, "message": f"Invalid config key: {dotted_key!r}"},
+                })
+                return
+            cursor = cfg
+            for part in parts[:-1]:
+                if part not in cursor or not isinstance(cursor[part], dict):
+                    cursor[part] = {}
+                cursor = cursor[part]
+            cursor[parts[-1]] = value
+        ok = cfg_module.save_config(cfg)
+        _write_response({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {"ok": ok},
+        })
+        return
+
     _write_response({
         "jsonrpc": "2.0",
         "id": req_id,

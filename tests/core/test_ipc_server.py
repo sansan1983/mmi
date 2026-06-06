@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
 
 def _spawn_server() -> subprocess.Popen:
@@ -74,6 +75,34 @@ def test_list_sessions_returns_sorted_by_heat():
         assert "result" in response
         assert "sessions" in response["result"]
         assert isinstance(response["result"]["sessions"], list)
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
+
+
+def test_set_config_persists_theme(tmp_path, monkeypatch):
+    # Note: real paths API uses MMI_HOME (not MMI_CONFIG_DIR as the original
+    # spec draft assumed). The handler must accept dotted keys like
+    # "tui.theme" and persist them under the matching nested TOML section.
+    monkeypatch.setenv("MMI_HOME", str(tmp_path))
+    proc = _spawn_server()
+    try:
+        assert proc.stdin is not None and proc.stdout is not None
+        request = {
+            "jsonrpc": "2.0", "id": 20, "method": "set_config",
+            "params": {"tui.theme": "light"},
+        }
+        proc.stdin.write(json.dumps(request) + "\n")
+        proc.stdin.flush()
+        line = proc.stdout.readline()
+        response = json.loads(line)
+        assert response["id"] == 20
+        assert response["result"]["ok"] is True
+        # Side-effect: config.toml must contain tui.theme = "light"
+        cfg_file = tmp_path / "config.toml"
+        assert cfg_file.exists()
+        loaded = yaml.safe_load(cfg_file.read_text(encoding="utf-8"))
+        assert loaded["tui"]["theme"] == "light"
     finally:
         proc.terminate()
         proc.wait(timeout=5)
