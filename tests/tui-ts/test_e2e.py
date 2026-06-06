@@ -2,9 +2,10 @@
 
 We don't drive a real TTY (no PTY in unit tests), but we can:
   1. Verify the bundle exists and is executable.
-  2. Spawn the IPC server alone and confirm a hello response.
-  3. Spawn the bundle with a piped stdin that closes immediately and
-     confirm it exits with code 0 (graceful shutdown).
+  2. Spawn the bundle, let Ink start rendering, then kill it. Verify:
+     - No TypeError / ReferenceError in stderr.
+     - The SessionHub content ("MMI", "Sessions", etc.) appears in stdout,
+       proving the router actually wires up the screen (not the placeholder).
 """
 from __future__ import annotations
 
@@ -35,12 +36,37 @@ def test_bundle_exists_and_is_valid_js():
 
 @pytest.mark.skipif(not _have_node(), reason="node not installed")
 @pytest.mark.skipif(not DIST.exists(), reason="bundle not built")
-def test_bundle_exits_cleanly_with_closed_stdin():
-    """Run the bundle with a closed stdin; it should exit gracefully."""
-    proc = subprocess.run(
-        [shutil.which("node"), str(DIST)],
-        input="", capture_output=True, text=True, timeout=10,
+def test_bundle_renders_sessionhub_and_does_not_crash():
+    """Spawn the bundle, give Ink a moment to render, then kill it.
+
+    Asserts the SessionHub content actually appears in stdout (so the
+    router wiring is real) and that there is no TypeError / ReferenceError
+    anywhere in the output (Ink's raw-mode warning is fine — it only fires
+    under non-TTY stdin, which is what we use here).
+    """
+    proc = subprocess.Popen(
+        [shutil.which("node"), str(DIST)],  # type: ignore[list-item]
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
-    # Exit code may be non-zero if TUI cannot render to non-TTY, but no crash traceback.
-    assert "TypeError" not in proc.stderr
-    assert "ReferenceError" not in proc.stderr
+    try:
+        out, err = proc.communicate(input=b"", timeout=3)
+    except subprocess.TimeoutExpired:
+        # TUI is alive and listening for input — expected. Kill it and read
+        # whatever Ink managed to render so far.
+        proc.kill()
+        out, err = proc.communicate()
+
+    combined = (out + err).decode("utf-8", errors="replace")
+
+    # The router must actually render the SessionHub, not the placeholder.
+    assert "MMI" in combined, "SessionHub 'MMI' header not found in bundle output"
+    assert "Sessions" in combined, "SessionHub 'Sessions' divider not found in bundle output"
+    assert "Multimodal Intelligence" in combined, (
+        "SessionHub tagline not found — router may still be showing the placeholder"
+    )
+
+    # No JS crash tracebacks allowed.
+    assert "TypeError" not in combined
+    assert "ReferenceError" not in combined
