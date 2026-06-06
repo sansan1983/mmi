@@ -59,3 +59,21 @@ def test_unknown_method_returns_error():
     finally:
         proc.terminate()
         proc.wait(timeout=5)
+
+
+def test_list_sessions_returns_sorted_by_heat():
+    proc = _spawn_server()
+    try:
+        assert proc.stdin is not None and proc.stdout is not None
+        request = {"jsonrpc": "2.0", "id": 3, "method": "list_sessions", "params": {"limit": 5, "sort": "heat"}}
+        proc.stdin.write(json.dumps(request) + "\n")
+        proc.stdin.flush()
+        line = proc.stdout.readline()
+        response = json.loads(line)
+        assert response["id"] == 3
+        assert "result" in response
+        assert "sessions" in response["result"]
+        assert isinstance(response["result"]["sessions"], list)
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)

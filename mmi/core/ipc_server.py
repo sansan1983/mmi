@@ -26,7 +26,7 @@ def _handle_request(request: dict[str, Any]) -> None:
     """Dispatch a single JSON-RPC request and write a response."""
     req_id = request.get("id")
     method = request.get("method")
-    params = request.get("params", {})  # noqa: F841 — reserved for future handlers
+    params = request.get("params", {})
 
     if method == "hello":
         _write_response({
@@ -35,6 +35,29 @@ def _handle_request(request: dict[str, Any]) -> None:
             "result": {
                 "protocol_version": PROTOCOL_VERSION,
                 "server": SERVER_NAME,
+            },
+        })
+        return
+
+    if method == "list_sessions":
+        from .manager import SessionManager  # lazy import to keep startup fast
+        mgr = SessionManager()
+        # NOTE: SessionManager.list_sessions currently only accepts `limit` and
+        # always sorts by heat (manager.py:230-231). We still accept `sort` in
+        # the IPC params for forward-compat (TUI may pass "heat" | "last_access")
+        # and silently ignore unknown sort keys — keeps the wire contract stable
+        # if manager.py later adds sort options.
+        sessions = mgr.list_sessions(
+            limit=int(params.get("limit", 20)),
+        )
+        _write_response({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "sessions": [
+                    {"id": s.session_id, "title": s.title, "heat": s.heat}
+                    for s in sessions
+                ],
             },
         })
         return
