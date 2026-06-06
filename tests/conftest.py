@@ -1,12 +1,11 @@
-"""tests/conftest.py —— TUI 测试专用 fixture。
+"""tests/conftest.py —— 共享 pytest fixtures。
 
 ARCHITECTURE Phase 5：
   - isolated_home：隔离 MMI_HOME
   - scripted_llm：可预设回复的 LLM provider
-  - run_pilot：跑 textual app 测试
 
 R8 跨期遗留 #8 收尾:ScriptedLLM 抽到 tests/_fakes.py,本文件保留 fixture
-(scripted_llm_factory / make_app),不再定义 LLM 类。
+(scripted_llm_factory),不再定义 LLM 类。
 """
 from __future__ import annotations
 
@@ -16,7 +15,6 @@ import pytest
 from ulid import ULID
 
 from mmi.core import paths
-from mmi.core.llm import LLMProvider
 from tests._fakes import ScriptedLLM
 
 
@@ -34,25 +32,6 @@ def isolated_home(tmp_path, monkeypatch):
     monkeypatch.setenv("MMI_HOME", str(tmp_path))
     paths.ensure_dirs()
     yield tmp_path
-
-
-# ---------------------------------------------------------------------------
-# CTrimApp 工厂
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def make_app(isolated_home):
-    """返回一个工厂：传 (manager_kwargs) 拿到 CTrimApp。"""
-
-    def _factory(llm: LLMProvider | None = None):
-        from mmi.core import manager as mgr_module
-        from mmi.tui.app import CTrimApp
-
-        mgr = mgr_module.SessionManager(llm=llm) if llm else mgr_module.SessionManager()
-        return CTrimApp(mgr=mgr)
-
-    return _factory
 
 
 # ---------------------------------------------------------------------------

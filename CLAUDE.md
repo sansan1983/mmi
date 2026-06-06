@@ -21,8 +21,9 @@ mmi/
 ├── core/        # 记忆引擎（session/storage/heat/context/memory/gc等）
 ├── agent/       # Agent调度层（orchestrator/router/validator等）
 ├── cli.py       # CLI入口（mmi命令）
-├── tui/         # 终端UI（textual）
 └── tools/       # 诊断工具
+
+tui-ts/         # TUI 终端界面（TypeScript + Ink,通过 Python IPC 通信）
 ```
 
 ## 文档结构(`docs/`)

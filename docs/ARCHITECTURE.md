@@ -27,7 +27,7 @@
 ```
 ┌─────────────────────────────────────────────────────┐
 │              接入层                                  │
-│  Web GUI (Vue3)  │  CLI (typer)  │  TUI (textual)    │
+│  Web GUI (Vue3)  │  CLI (typer)  │  TUI (tui-ts: TS+Ink) │
 ├─────────────────────────────────────────────────────┤
 │            Agent 调度层 (mmi/agent/)                  │
 │  Orchestrator → Router → Agent Registry              │
@@ -81,12 +81,9 @@ mmi/
 │   └── trace.py         # 调用追踪
 │
 ├── cli.py           # 统一CLI（mmi 命令入口）
-├── tui/             # TUI 终端界面（textual）
-│   ├── app.py       # 应用入口
-│   ├── commands.py  # 斜杠命令
-│   ├── screens/     # list / chat / search
-│   └── widgets/     # chat_log / header_bar / status_bar / ...
 ├── tools/           # 诊断维护
+│
+tui-ts/             # TUI 终端界面（TypeScript + Ink,通过 Python IPC 通信）
 │   └── doctor.py    # mmi doctor
 └── skills/          # 内置技能库
 ```
@@ -325,7 +322,7 @@ zombie_days = 90
 | 包名/命令 | mmi | 统一品牌, 从ctrim演进 |
 | Python版本 | ≥3.11 | 类型系统现代化 |
 | CLI框架 | typer | 与ctrim一致 |
-| TUI框架 | textual | 与ctrim一致 |
+| TUI框架 | tui-ts（TypeScript + Ink） | 从 textual 迁出,经 Python IPC 与 core 通信 |
 
 ---
 
