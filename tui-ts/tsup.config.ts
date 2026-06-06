@@ -9,5 +9,5 @@ export default defineConfig({
   minify: false,
   sourcemap: true,
   clean: true,
-  banner: () => `#!/usr/bin/env node`,
+  banner: {},
 })
