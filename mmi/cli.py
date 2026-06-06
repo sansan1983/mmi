@@ -43,6 +43,10 @@ from mmi import __product_name__, __version__  # noqa: E402
 VERSION = __version__
 DEFAULT_LIMIT = 10
 
+# 仓库根目录（cli.py 上两级：mmi/cli.py -> mmi/ -> REPO_ROOT）。
+# 给 tui 子命令定位 tui-ts/dist/mmi-tui.js 用。
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
 
 # ---------------------------------------------------------------------------
 # Argument parser
@@ -132,7 +136,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     # tui
-    sub.add_parser("tui", help="启动 TUI（textual）")
+    p_tui = sub.add_parser("tui", help="启动 TUI（TypeScript + Ink，通过 Python IPC 通信）")
+    p_tui.add_argument(
+        "--build",
+        action="store_true",
+        help="强制重新构建 tui-ts 的 TypeScript bundle（首次启动会自动构建）",
+    )
 
     # doctor
     sub.add_parser("doctor", help="系统诊断 — 检查模块/会话/文件系统/heat一致性/GC状态")
@@ -784,9 +793,75 @@ def cmd_memory(args, mgr) -> int:
         os.environ["MMI_HOME"] = str(Path.home() / ".mmi-fusion")
 
 def cmd_tui(args, mgr) -> int:
-    """启动 TUI（textual 界面）。"""
-    from mmi.tui import run_tui
-    return run_tui()
+    """启动 TUI（TypeScript + Ink 渲染层，Python IPC 提供会话/消息/记忆数据）。
+
+    流程：
+      1. 检查 node 是否可用，缺失则报错退出 1。
+      2. 检查 tui-ts/dist/mmi-tui.js 是否存在；不存在或显式传 --build 时
+         自动跑 `npm install && npm run build` 重新打包。
+      3. 通过 portalocker 在 ~/.mmi/run/tui.lock 拿非阻塞排他锁，避免
+         多个 TUI 同时跑抢同一 IPC 端口。锁被占则友好提示并退出 1。
+      4. 用 subprocess.run 跑打包好的 JS bundle,把当前 Python 解释器
+         路径注入到子进程 env["PYTHON"],TUI 端会通过这个变量回拉
+         IPC server。
+      5. 退出时在 finally 里释放锁。
+    """
+    import os
+    import shutil
+    import subprocess
+
+    import portalocker
+
+    # 1) node 检查
+    node = shutil.which("node")
+    if node is None:
+        print("Node.js >= 18 未安装。请到 https://nodejs.org/ 安装。", file=sys.stderr)
+        return 1
+
+    # 2) 单实例锁：portalocker 非阻塞(LOCK_NB),抢不到就退出 1
+    paths.ensure_dirs()
+    lock_path = paths.get_root() / "run" / "tui.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock = portalocker.Lock(
+        str(lock_path),
+        mode="w",
+        timeout=0.0,
+        flags=portalocker.LOCK_EX | portalocker.LOCK_NB,
+    )
+    try:
+        lock.acquire()
+    except portalocker.LockException:
+        print("已有另一个 `mmi tui` 在运行（lock: {}）。".format(lock_path), file=sys.stderr)
+        return 1
+
+    try:
+        # 3) dist 检查 / 按需构建
+        dist = REPO_ROOT / "tui-ts" / "dist" / "mmi-tui.js"
+        if args.build or not dist.exists():
+            tui_ts = REPO_ROOT / "tui-ts"
+            print("[tui] 安装依赖并构建 bundle（首次 / --build）...", file=sys.stderr)
+            npm = shutil.which("npm")
+            if npm is None:
+                print("npm 未安装,无法构建。", file=sys.stderr)
+                return 1
+            r1 = subprocess.run([npm, "install"], cwd=str(tui_ts), check=False)
+            if r1.returncode != 0:
+                return r1.returncode
+            r2 = subprocess.run([npm, "run", "build"], cwd=str(tui_ts), check=False)
+            if r2.returncode != 0:
+                return r2.returncode
+
+        # 4) 启 bundle
+        env = os.environ.copy()
+        env.setdefault("PYTHON", sys.executable)
+        result = subprocess.run([node, str(dist)], env=env, check=False)
+        return result.returncode
+    finally:
+        # 5) 释放锁
+        try:
+            lock.release()
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
