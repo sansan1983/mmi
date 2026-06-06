@@ -77,3 +77,30 @@ def test_list_sessions_returns_sorted_by_heat():
     finally:
         proc.terminate()
         proc.wait(timeout=5)
+
+
+def test_send_message_emits_token_events_then_result():
+    """send_message should stream token events, then a final response."""
+    proc = _spawn_server()
+    try:
+        assert proc.stdin is not None and proc.stdout is not None
+        request = {
+            "jsonrpc": "2.0", "id": 10, "method": "send_message",
+            "params": {"session_id": "fake", "content": "hi"},
+        }
+        proc.stdin.write(json.dumps(request) + "\n")
+        proc.stdin.flush()
+        # Read lines until we see a response with id=10
+        seen_token = False
+        for _ in range(50):
+            line = proc.stdout.readline()
+            msg = json.loads(line)
+            if msg.get("method") == "token":
+                seen_token = True
+            if msg.get("id") == 10:
+                assert "result" in msg
+                break
+        assert seen_token, "expected at least one token event before final response"
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)

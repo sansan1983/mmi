@@ -12,6 +12,8 @@ import json
 import sys
 from typing import Any
 
+import anyio  # noqa: E402  (keep with imports)
+
 PROTOCOL_VERSION = 1
 SERVER_NAME = "mmi-core"
 
@@ -60,6 +62,27 @@ def _handle_request(request: dict[str, Any]) -> None:
                 ],
             },
         })
+        return
+
+    if method == "send_message":
+        from .llm import stream_chat  # TODO: real implementation in M4 wiring
+
+        async def _run() -> None:
+            async for delta in stream_chat(
+                session_id=params.get("session_id", ""),
+                content=params.get("content", ""),
+            ):
+                _write_response({
+                    "jsonrpc": "2.0",
+                    "method": "token",
+                    "params": {"session_id": params.get("session_id", ""), "delta": delta},
+                })
+            _write_response({
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"ok": True},
+            })
+        anyio.run(_run)  # run async loop in this (sync) thread; output is line-buffered
         return
 
     _write_response({
