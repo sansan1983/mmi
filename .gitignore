@@ -28,3 +28,7 @@ venv/
 # MMI data
 ~/.mmi/sessions/
 *.session.md.bak
+
+# TypeScript TUI
+tui-ts/dist/
+tui-ts/node_modules/
