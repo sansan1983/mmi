@@ -1,8 +1,14 @@
-"""tests/test_heat.py —— core.heat 单元测试（P2-2 更新）。
+"""tests/test_heat.py —— core.heat 单元测试。
 
-P2-2 改动：
-  - recency_bonus：阶梯式 → 对数衰减 10 / (1 + log10(1 + days))
-  - age_penalty：线性 → 平方根 sqrt(days / 30)
+覆盖（ARCHITECTURE.md §8.4）：
+  - recency_bonus 阶梯（1/7/30 天）
+  - age_penalty 线性（每 30 天 -1）
+  - compute_heat 公式正确
+  - derive_state 阈值（active/warm/cold）
+  - cold_since 写入/清空时序
+  - zombie 触发（cold 持续 > 90 天）
+  - apply_heat_and_state 原地更新 SessionMeta
+  - sort_by_heat 排序
 """
 
 from __future__ import annotations
@@ -15,7 +21,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from mmi.core.heat import (
+from mmi.core.heat import (  # noqa: E402
     HEAT_ACTIVE_THRESHOLD,
     HEAT_WARM_THRESHOLD,
     ZOMBIE_DAYS,
@@ -27,7 +33,7 @@ from mmi.core.heat import (
     recency_bonus,
     sort_by_heat,
 )
-from mmi.core.session import Session, SessionMeta, new_session_id
+from mmi.core.session import Session, SessionMeta, new_session_id  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -36,85 +42,66 @@ from mmi.core.session import Session, SessionMeta, new_session_id
 
 
 def _ago(days: float, **kw) -> datetime:
+    """N 天前的 UTC datetime。"""
     return datetime.now(timezone.utc) - timedelta(days=days, **kw)
 
 
 def _at_iso(dt: datetime) -> str:
+    """datetime → ISO 字符串（与 session.utcnow_iso 同格式）。"""
     dt = dt.astimezone(timezone.utc)
     return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
 
 
 # ---------------------------------------------------------------------------
-# recency_bonus（P2-2 对数衰减）
+# recency_bonus
 # ---------------------------------------------------------------------------
 
 
 class TestRecencyBonus:
     def test_within_1_day(self):
-        """当天访问：bonus ≈ 10。"""
         now = datetime.now(timezone.utc)
-        assert recency_bonus(now, now=now) == pytest.approx(10.0, rel=1e-3)
+        assert recency_bonus(now, now=now) == 10.0
 
     def test_within_7_days(self):
-        """3 天前访问：bonus ≈ 6.24。"""
         now = datetime.now(timezone.utc)
-        assert recency_bonus(now - timedelta(days=3), now=now) == pytest.approx(6.24, rel=1e-2)
+        assert recency_bonus(now - timedelta(days=3), now=now) == 5.0
 
     def test_within_30_days(self):
-        """15 天前访问：bonus ≈ 4.54。"""
         now = datetime.now(timezone.utc)
-        assert recency_bonus(now - timedelta(days=15), now=now) == pytest.approx(4.54, rel=1e-2)
+        assert recency_bonus(now - timedelta(days=15), now=now) == 1.0
 
     def test_beyond_30_days(self):
-        """60 天前访问：bonus ≈ 3.59（对数衰减，不会突降到 0）。"""
         now = datetime.now(timezone.utc)
-        assert recency_bonus(now - timedelta(days=60), now=now) == pytest.approx(3.59, rel=1e-2)
-
-    def test_very_old_session(self):
-        """200 天前访问：bonus ≈ 3.03（仍然 > 0，但很小）。"""
-        now = datetime.now(timezone.utc)
-        assert recency_bonus(now - timedelta(days=200), now=now) == pytest.approx(3.027, rel=1e-2)
+        assert recency_bonus(now - timedelta(days=60), now=now) == 0.0
 
     def test_clock_skew_negative_delta_clamped(self):
-        """last_access 在未来 → 当作刚刚访问（bonus=10）。"""
+        """last_access 在未来（时钟回拨）→ 当作 0。"""
         now = datetime.now(timezone.utc)
         future = now + timedelta(hours=1)
-        assert recency_bonus(future, now=now) == pytest.approx(10.0, rel=1e-3)
+        assert recency_bonus(future, now=now) == 10.0
 
     def test_naive_datetime_treated_as_utc(self):
         now = datetime.now(timezone.utc)
         naive = (now - timedelta(days=2)).replace(tzinfo=None)
-        assert recency_bonus(naive, now=now) == pytest.approx(6.77, rel=1e-2)
+        assert recency_bonus(naive, now=now) == 5.0
 
     def test_none_returns_zero(self):
         assert recency_bonus(None) == 0.0
 
 
 # ---------------------------------------------------------------------------
-# age_penalty（P2-2 平方根）
+# age_penalty
 # ---------------------------------------------------------------------------
 
 
 class TestAgePenalty:
     def test_30_days(self):
-        """30 天：penalty = 1.0（与旧公式一致）。"""
         now = datetime.now(timezone.utc)
-        assert age_penalty(now - timedelta(days=30), now=now) == pytest.approx(1.0, rel=1e-3)
+        assert age_penalty(now - timedelta(days=30), now=now) == pytest.approx(1.0)
 
     def test_60_days(self):
-        """60 天：penalty ≈ 1.41（旧公式 2.0）。"""
         now = datetime.now(timezone.utc)
-        assert age_penalty(now - timedelta(days=60), now=now) == pytest.approx(1.41, rel=1e-2)
-
-    def test_90_days(self):
-        """90 天：penalty ≈ 1.73（旧公式 3.0）。"""
-        now = datetime.now(timezone.utc)
-        assert age_penalty(now - timedelta(days=90), now=now) == pytest.approx(1.73, rel=1e-2)
-
-    def test_365_days(self):
-        """365 天：penalty ≈ 3.48（旧公式 12.2，新公式温和得多）。"""
-        now = datetime.now(timezone.utc)
-        assert age_penalty(now - timedelta(days=365), now=now) == pytest.approx(3.48, rel=1e-2)
+        assert age_penalty(now - timedelta(days=60), now=now) == pytest.approx(2.0)
 
     def test_zero_days(self):
         now = datetime.now(timezone.utc)
@@ -122,6 +109,7 @@ class TestAgePenalty:
 
     def test_negative_delta_treated_as_zero(self):
         now = datetime.now(timezone.utc)
+        # created_at 在未来（极端情况）
         assert age_penalty(now + timedelta(days=10), now=now) == 0.0
 
     def test_none_returns_zero(self):
@@ -129,7 +117,7 @@ class TestAgePenalty:
 
 
 # ---------------------------------------------------------------------------
-# compute_heat（P2-2 更新）
+# compute_heat
 # ---------------------------------------------------------------------------
 
 
@@ -143,10 +131,10 @@ class TestComputeHeat:
             created_at=now,
             now=now,
         )
-        assert h == pytest.approx(11.0, rel=1e-3)
+        assert h == pytest.approx(11.0)
 
     def test_aged_but_recently_used(self):
-        """60 天前创建、今天访问、access=1 → 1 + 10 - 1.41 ≈ 9.59 → warm。"""
+        """60 天前创建、今天访问、access=1 → 1 + 10 - 2 = 9 → warm。"""
         now = datetime.now(timezone.utc)
         h = compute_heat(
             access_count=1,
@@ -154,7 +142,7 @@ class TestComputeHeat:
             created_at=now - timedelta(days=60),
             now=now,
         )
-        assert h == pytest.approx(9.59, rel=1e-2)
+        assert h == pytest.approx(9.0)
 
     def test_frequently_accessed(self):
         """access=20、今天访问、新建 → 20 + 10 = 30 → active。"""
@@ -165,10 +153,10 @@ class TestComputeHeat:
             created_at=now,
             now=now,
         )
-        assert h == pytest.approx(30.0, rel=1e-3)
+        assert h == pytest.approx(30.0)
 
     def test_ancient_session_with_no_recent_access(self):
-        """200 天前创建、60 天前最后访问、access=1 → heat 可能仍为正（recency_bonus 衰减慢）。"""
+        """200 天前创建、access=1、60 天前最后访问 → 1 + 0 - 6.67 ≈ -5.67。"""
         now = datetime.now(timezone.utc)
         h = compute_heat(
             access_count=1,
@@ -176,14 +164,13 @@ class TestComputeHeat:
             created_at=now - timedelta(days=200),
             now=now,
         )
-        # 新公式：1 + 3.59 - 2.58 ≈ 2.01（仍为正，但接近 0）
-        # 旧公式：1 + 0 - 6.67 ≈ -5.67
-        # 新公式更温和，避免老会话被过度惩罚
-        assert h > 0  # 仍然为正（recency_bonus 衰减慢）
+        # 1 + 0 - 200/30 = 1 - 6.667 = -5.667
+        assert h < 0
+        assert h == pytest.approx(-5.667, rel=1e-3)
 
 
 # ---------------------------------------------------------------------------
-# derive_state（不变）
+# derive_state
 # ---------------------------------------------------------------------------
 
 
@@ -209,6 +196,7 @@ class TestDeriveState:
         assert cs is not None
 
     def test_cold_to_active_clears_cold_since(self):
+        """heat 回升：cold_since 应当清空。"""
         now = datetime.now(timezone.utc)
         old_cold_since = now - timedelta(days=10)
         state, cs = derive_state(15.0, prev_state="cold", cold_since=old_cold_since, now=now)
@@ -223,6 +211,7 @@ class TestDeriveState:
         assert cs is None
 
     def test_cold_preserves_cold_since(self):
+        """已经在 cold：cold_since 不变（避免被每次重算覆盖）。"""
         now = datetime.now(timezone.utc)
         old_cold_since = now - timedelta(days=20)
         state, cs = derive_state(1.0, prev_state="cold", cold_since=old_cold_since, now=now)
@@ -234,14 +223,16 @@ class TestDeriveState:
         old_cold_since = now - timedelta(days=ZOMBIE_DAYS + 5)
         state, cs = derive_state(1.0, prev_state="cold", cold_since=old_cold_since, now=now)
         assert state == "zombie"
-        assert cs == old_cold_since
+        assert cs == old_cold_since  # 保留 cold_since 便于追溯
 
     def test_zombie_persists_when_heat_still_low(self):
+        """prev_state=zombie 且新算出的 heat 仍 < warm_threshold → 保持 zombie。"""
         now = datetime.now(timezone.utc)
         state, cs = derive_state(2.0, prev_state="zombie", cold_since=now - timedelta(days=100), now=now)
         assert state == "zombie"
 
     def test_zombie_recovers_when_heat_high(self):
+        """prev_state=zombie 但 heat 回到 active 区间 → 离开 zombie。"""
         now = datetime.now(timezone.utc)
         state, cs = derive_state(15.0, prev_state="zombie", cold_since=now - timedelta(days=100), now=now)
         assert state == "active"
@@ -255,13 +246,18 @@ class TestDeriveState:
 
 
 # ---------------------------------------------------------------------------
-# apply_heat_and_state（P2-2 更新）
+# apply_heat_and_state
 # ---------------------------------------------------------------------------
 
 
 class TestApplyHeatAndState:
     def test_updates_heat_and_state(self):
         meta = SessionMeta.new(new_session_id(), title="t")
+        # 新建默认 heat=1.0, state=active
+        assert meta.heat == 1.0
+        assert meta.state == "active"
+        assert meta.cold_since == ""
+
         apply_heat_and_state(meta)
         # 1 次访问 + 刚刚 + 今天创建 → heat ≈ 1 + 10 - 0 = 11
         assert meta.heat == pytest.approx(11.0, rel=1e-3)
@@ -269,7 +265,7 @@ class TestApplyHeatAndState:
         assert meta.cold_since == ""
 
     def test_aged_session_becomes_warm(self):
-        """60 天前创建、今天访问、access=1 → heat ≈ 9.59 → warm。"""
+        """60 天前创建、今天访问、access=1 → heat=9 → warm。"""
         meta = SessionMeta.new(new_session_id(), title="t")
         meta.created_at = _at_iso(_ago(60))
         meta.last_access = _at_iso(_ago(0))
@@ -278,10 +274,10 @@ class TestApplyHeatAndState:
 
         apply_heat_and_state(meta)
         assert meta.state == "warm"
-        assert meta.heat == pytest.approx(9.59, rel=1e-2)
+        assert meta.heat == pytest.approx(9.0, rel=1e-3)
 
     def test_very_old_session_becomes_cold(self):
-        """200 天前创建、60 天前最后访问、access=1 → heat 可能仍为正，但 state 取决于阈值。"""
+        """200 天前创建、60 天前最后访问、access=1 → heat<0 → cold + cold_since 写入。"""
         meta = SessionMeta.new(new_session_id(), title="t")
         meta.created_at = _at_iso(_ago(200))
         meta.last_access = _at_iso(_ago(60))
@@ -289,11 +285,12 @@ class TestApplyHeatAndState:
         meta.heat = 0.0
 
         apply_heat_and_state(meta)
-        # 新公式：heat ≈ 1 + 3.59 - 2.58 = 2.01 → warm（不是 cold）
-        # 如果要让它变成 cold，需要 last_access 更久（比如 90 天以上）
-        assert meta.heat > 0
+        assert meta.state == "cold"
+        assert meta.heat < 0
+        assert meta.cold_since != ""
 
     def test_cold_since_preserved_on_repeated_apply(self):
+        """连续两次 apply 在 cold 区间 → cold_since 不被覆盖。"""
         meta = SessionMeta.new(new_session_id(), title="t")
         meta.created_at = _at_iso(_ago(200))
         meta.last_access = _at_iso(_ago(60))
@@ -301,12 +298,10 @@ class TestApplyHeatAndState:
 
         apply_heat_and_state(meta)
         first_cs = meta.cold_since
-        # 注意：新公式下，这个 session 可能不会被标记为 cold（heat > warm_threshold）
-        # 如果 state 不是 cold，cold_since 应该是空字符串
-        if meta.state == "cold":
-            assert first_cs
-            apply_heat_and_state(meta)
-            assert meta.cold_since == first_cs
+        assert first_cs
+
+        apply_heat_and_state(meta)
+        assert meta.cold_since == first_cs
 
     def test_cold_to_active_clears_cold_since(self):
         meta = SessionMeta.new(new_session_id(), title="t")
@@ -315,20 +310,20 @@ class TestApplyHeatAndState:
         meta.access_count = 1
 
         apply_heat_and_state(meta)
-        # 如果 state 是 cold，测试清除逻辑
-        if meta.state == "cold":
-            assert meta.cold_since
+        assert meta.state == "cold"
+        assert meta.cold_since
 
-            # 用户回来 chat 几次 → access_count 涨、last_access 更新
-            meta.access_count = 20
-            meta.last_access = _at_iso(_ago(0))
-            apply_heat_and_state(meta)
-            assert meta.state == "active"
-            assert meta.cold_since == ""
+        # 用户回来 chat 几次 → access_count 涨、last_access 更新
+        # 200 天老会话：需要 access=10+ 才能让 heat 突破 active_threshold
+        meta.access_count = 20
+        meta.last_access = _at_iso(_ago(0))
+        apply_heat_and_state(meta)
+        assert meta.state == "active"
+        assert meta.cold_since == ""
 
 
 # ---------------------------------------------------------------------------
-# sort_by_heat（不变）
+# sort_by_heat
 # ---------------------------------------------------------------------------
 
 
@@ -366,7 +361,7 @@ class TestSortByHeat:
 
 
 # ---------------------------------------------------------------------------
-# HeatConfig（不变）
+# HeatConfig
 # ---------------------------------------------------------------------------
 
 
@@ -379,12 +374,13 @@ class TestHeatConfig:
 
     def test_custom_threshold(self):
         cfg = HeatConfig(active_threshold=20.0, warm_threshold=2.0)
+        # heat=15 在默认下是 active，在自定义下是 warm
         state, _ = derive_state(15.0, prev_state="active", cold_since=None, config=cfg)
         assert state == "warm"
 
 
 # ---------------------------------------------------------------------------
-# 端到端：Session 落盘 + 重读（不变）
+# 端到端：Session 落盘 + 重读
 # ---------------------------------------------------------------------------
 
 
@@ -399,17 +395,15 @@ class TestRoundtrip:
         meta.last_access = _at_iso(_ago(60))
         meta.access_count = 1
         apply_heat_and_state(meta)
-        # 新公式下，state 可能不是 cold（heat 可能 > warm_threshold）
-        # 如果是 cold，检查 cold_since；否则跳过
-        if meta.state == "cold":
-            assert meta.cold_since != ""
+        assert meta.state == "cold"
 
-            s = Session(meta=meta, body="")
-            from mmi.core import storage
-            storage.write_session(s)
+        # 落盘
+        s = Session(meta=meta, body="")
+        from mmi.core import storage
+        storage.write_session(s)
 
-            s2 = storage.read_session(meta.session_id)
-            assert s2.meta.state == "cold"
-            assert s2.meta.cold_since != ""
-            # 新公式下 heat 可能仍为正（recency_bonus 衰减慢），不再期望 heat < 0
-            assert s2.meta.heat < HEAT_WARM_THRESHOLD  # cold 态下 heat 应 < warm_threshold
+        # 重读
+        s2 = storage.read_session(meta.session_id)
+        assert s2.meta.state == "cold"
+        assert s2.meta.cold_since != ""
+        assert s2.meta.heat < 0

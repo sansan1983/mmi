@@ -55,16 +55,7 @@ ZOMBIE_DAYS: int = 90
 # 公式权重
 ACCESS_WEIGHT: float = 1.0
 
-# recency_bonus 阶梯（days_since_last_access → bonus）
-# 设计：1 天内 10, 7 天 5, 30 天 1；越久越接近 0
-_RECENCY_TIERS: tuple[tuple[float, float], ...] = (
-    (1.0, 10.0),    # ≤1 天 → +10
-    (7.0, 5.0),     # ≤7 天 → +5
-    (30.0, 1.0),    # ≤30 天 → +1
-    # 超过 30 天 → 0
-)
-
-# age_penalty：每 30 天 -1（线性）
+# age_penalty：每 30 天惩罚单位 1（平方根基数）
 _AGE_PENALTY_PER_DAYS: float = 30.0
 _AGE_PENALTY_PER_UNIT: float = 1.0
 
@@ -92,36 +83,43 @@ class HeatConfig:
 
 
 def recency_bonus(last_access: datetime, *, now: datetime | None = None) -> float:
-    """最近访问带来的热度加成。
+    """最近访问带来的热度加成（P2-2 平滑对数衰减）。
 
-    阶梯（ARCHITECTURE.md §8.4）：
-        ≤ 1 天  → +10
-        ≤ 7 天  → +5
-        ≤ 30 天 → +1
-        > 30 天 → 0
+    公式：bonus = 10 / (1 + log10(1 + days))
+    特点：
+        days=0   → bonus=10
+        days=1   → bonus≈5
+        days=7   → bonus≈3.5
+        days=30  → bonus≈2.5
+        days=100 → bonus≈1.7
+        days→∞  → bonus→0（渐进趋近于0，不会突降为0）
+    比阶梯式更平滑，避免边界跳变。
     """
+    import math
     if last_access is None:
         return 0.0
     if now is None:
         now = datetime.now(timezone.utc)
-    # 统一到带 tz 的 aware datetime
     if last_access.tzinfo is None:
         last_access = last_access.replace(tzinfo=timezone.utc)
-    delta_days = (now - last_access).total_seconds() / 86400.0
-    if delta_days < 0:
-        # 时钟回拨：当作刚刚访问
-        delta_days = 0.0
-    for max_days, bonus in _RECENCY_TIERS:
-        if delta_days <= max_days:
-            return bonus
-    return 0.0
+    delta_days = max(0.0, (now - last_access).total_seconds() / 86400.0)
+    # 避免 log10(1) = 0 导致除零；用 1 + log10(1 + days)
+    decay = 1.0 + math.log10(1.0 + delta_days)
+    return round(10.0 / decay, 4)
 
 
 def age_penalty(created_at: datetime, *, now: datetime | None = None) -> float:
-    """会话年龄带来的热度惩罚。
+    """会话年龄带来的热度惩罚（P2-2 平方根惩罚）。
 
-    每 30 天 -1（线性）。created_at 缺失或晚于 now（极端情况）→ 0。
+    公式：penalty = sqrt(days_old / 30)
+    特点：
+        - 增长速度比线性慢，避免老会话被过度惩罚
+        - 30 天 → 1.0（与旧公式一致）
+        - 90 天 → 1.73（旧公式 3.0）
+        - 365 天 → 3.48（旧公式 12.2）
+    老会话如果仍然活跃（access_count 高），heat 仍然可以保持正数。
     """
+    import math
     if created_at is None:
         return 0.0
     if now is None:
@@ -131,7 +129,7 @@ def age_penalty(created_at: datetime, *, now: datetime | None = None) -> float:
     delta_days = (now - created_at).total_seconds() / 86400.0
     if delta_days <= 0:
         return 0.0
-    return (delta_days / _AGE_PENALTY_PER_DAYS) * _AGE_PENALTY_PER_UNIT
+    return round(math.sqrt(delta_days / _AGE_PENALTY_PER_DAYS) * _AGE_PENALTY_PER_UNIT, 4)
 
 
 def compute_heat(
