@@ -217,6 +217,7 @@ def test_fetch_anthropic_style_success():
 
 
 def test_fetch_401_raises():
+    model_fetcher.clear_cache()
     fake = _make_fake_client_factory([(401, {"err": "bad key"})])
     p = providers.get_provider("qwen")
     with pytest.raises(model_fetcher.ModelFetchError, match="鉴权失败"):

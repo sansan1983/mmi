@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
@@ -19,6 +20,7 @@ __all__ = [
     "ModelInfo",
     "fetch_models",
     "ModelFetchError",
+    "clear_cache",
 ]
 
 
@@ -34,6 +36,48 @@ class ModelInfo:
 
 class ModelFetchError(Exception):
     """拉取模型失败(网络/鉴权/协议错误)。"""
+
+
+# ---------------------------------------------------------------------------
+# 本地缓存（P2-5）
+# ---------------------------------------------------------------------------
+
+_DEFAULT_TTL_S = 300.0   # 5 分钟
+
+
+class _ModelCache:
+    """进程内模型列表缓存，按 provider.name 缓存，TTL 防过期。"""
+
+    def __init__(self, ttl_s: float = _DEFAULT_TTL_S) -> None:
+        self._ttl = ttl_s
+        self._store: dict[str, tuple[list[ModelInfo], float]] = {}
+
+    def get(self, provider_name: str) -> list[ModelInfo] | None:
+        """命中缓存则返回 model 列表；未命中或已过期返回 None。"""
+        entry = self._store.get(provider_name)
+        if entry is None:
+            return None
+        models, ts = entry
+        if time.monotonic() - ts > self._ttl:
+            del self._store[provider_name]
+            return None
+        return list(models)
+
+    def set(self, provider_name: str, models: list[ModelInfo]) -> None:
+        """写入缓存（带当前时间戳）。"""
+        self._store[provider_name] = (list(models), time.monotonic())
+
+    def clear(self) -> None:
+        """清空所有缓存。"""
+        self._store.clear()
+
+
+_cache = _ModelCache()
+
+
+def clear_cache() -> None:
+    """手动清除模型列表缓存（供测试和 wizard 重刷用）。"""
+    _cache.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -71,6 +115,12 @@ def fetch_models(
     Raises:
         ModelFetchError: 网络/鉴权/JSON 解析失败,且无回退可走
     """
+    # P2-5: 先查缓存
+    if not style_override:
+        cached = _cache.get(provider.name)
+        if cached is not None:
+            return cached
+
     if not api_key or not api_key.strip():
         raise ModelFetchError("api_key 为空,无法拉取模型列表")
 
@@ -90,15 +140,15 @@ def fetch_models(
         if style is None:
             break
         try:
-            return _fetch_with_style(provider, api_key, style=style,
-                                     timeout_s=timeout_s, client_factory=client_factory)
+            models = _fetch_with_style(provider, api_key, style=style,
+                                       timeout_s=timeout_s, client_factory=client_factory)
+            _cache.set(provider.name, models)
+            return models
         except ModelFetchError as e:
             last_err = e
             if fallback is None:
                 raise
-            # 继续试 fallback
             continue
-    # 走到这说明 fallback 也失败
     if last_err is not None:
         raise last_err
     raise ModelFetchError("unknown fetch error")
