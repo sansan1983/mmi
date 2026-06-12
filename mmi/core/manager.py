@@ -18,6 +18,7 @@ Phase 3 范围（ARCHITECTURE.md §9 Phase 3）：
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass
 
 from . import classifier as cls_module
@@ -100,6 +101,14 @@ class SessionManager:
         """R9 9.4:加 max_batch_workers 参,控制 batch_* 并发度。"""
         self.llm = llm if llm is not None else get_default_provider()
         self._max_batch_workers = max_batch_workers
+        # P1A-3: 线程安全锁（保护 create/_recompute_heat 等读-改-写流程）
+        self._lock = threading.RLock()
+        # P1A-1: 懒启动 GC daemon（daemon 内部保证单次启动）
+        try:
+            from . import gc_daemon as _gc_daemon
+            _gc_daemon.start_gc_daemon()
+        except Exception:
+            pass
 
     # ----- 列表 / 搜索 -----------------------------------------------------
 
@@ -254,10 +263,11 @@ class SessionManager:
         """
         from mmi.core import paths as _paths_mod  # local import so MMI_HOME is read fresh
         _paths_mod.ensure_dirs()
-        sid = new_session_id()
-        s = Session.empty(sid, title=title)
-        storage.write_session(s)
-        return sid
+        with self._lock:
+            sid = new_session_id()
+            s = Session.empty(sid, title=title)
+            storage.write_session(s)
+            return sid
 
     def get(self, session_id: str) -> Session:
         """读全文（frontmatter + body）。"""
@@ -420,6 +430,14 @@ class SessionManager:
         if not trashed:
             self._recompute_heat(session_id)
 
+        # 7) P1A-1: 通知 GC daemon 本次 chat 完成（后台线程按需触发 GC）
+        #    懒启动：首次 chat 时 ensure_started() 启动 daemon 线程
+        try:
+            from . import gc_daemon as _gc_daemon
+            _gc_daemon._get_gc_daemon().on_chat_done()
+        except Exception:
+            pass
+
         return ChatResult(
             reply=reply,
             title_updated=title_updated,
@@ -458,42 +476,42 @@ class SessionManager:
         """读最新 frontmatter → 算 heat + state → 写回。
 
         行为：
-          - 在文件锁内重读 + 算 + 写，避免与并发 write_session（如后台
-            update_summary）产生 lost-update 竞争
+          - 在 Manager._lock 内完成两阶段读-算-写，防止与并发 write_session
+            （如后台 update_summary）产生 lost-update 竞争
           - 只有 heat / state / cold_since 任一变化时才写盘
           - 文件丢失/损坏时静默跳过（不影响 chat 主流程）
-          - 由 chat() 末尾调用，也可独立调用（如 list 时惰性补算 —— 暂不做）
+          - 由 chat() 末尾调用，也可独立调用
         """
-        try:
-            with storage._exclusive_lock(session_id):
-                # 锁内重读：防止和 update_summary 等并发写入冲突
-                s = storage.read_session(session_id)
-        except (storage.SessionNotFound, storage.SessionCorrupt):
-            return
-        old_heat = s.meta.heat
-        old_state = s.meta.state
-        old_cold_since = s.meta.cold_since
-        # P2-9:传 total_turns 让 heat 算 content_weight
-        n_user_turns = s.body.count("**User:**")
-        heat_module.apply_heat_and_state(s.meta, total_turns=n_user_turns)
-        if (
-            s.meta.heat != old_heat
-            or s.meta.state != old_state
-            or s.meta.cold_since != old_cold_since
-        ):
+        with self._lock:
             try:
                 with storage._exclusive_lock(session_id):
-                    # 再读一次：若 update_summary 在我们算 heat 期间写了
-                    # summary，把 in-memory 的 heat/state 合并到最新视图里
-                    s2 = storage.read_session(session_id)
-                    s2.meta.heat = s.meta.heat
-                    s2.meta.state = s.meta.state
-                    s2.meta.cold_since = s.meta.cold_since
-                    s2.meta.updated_at = s.meta.updated_at
-                    # 直接 _atomic_write：write_session 会再 lock 死锁
-                    storage._atomic_write(
-                        storage.session_path(session_id),
-                        storage._dump_frontmatter(s2.meta) + s2.body,
-                    )
-            except (storage.SessionNotFound, storage.SessionCorrupt, OSError):
-                pass
+                    s = storage.read_session(session_id)
+            except (storage.SessionNotFound, storage.SessionCorrupt):
+                return
+            old_heat = s.meta.heat
+            old_state = s.meta.state
+            old_cold_since = s.meta.cold_since
+            # P2-9:传 total_turns 让 heat 算 content_weight
+            n_user_turns = s.body.count("**User:**")
+            heat_module.apply_heat_and_state(s.meta, total_turns=n_user_turns)
+            if (
+                s.meta.heat != old_heat
+                or s.meta.state != old_state
+                or s.meta.cold_since != old_cold_since
+            ):
+                try:
+                    with storage._exclusive_lock(session_id):
+                        # 再读一次：若 update_summary 在我们算 heat 期间写了
+                        # summary，把 in-memory 的 heat/state 合并到最新视图里
+                        s2 = storage.read_session(session_id)
+                        s2.meta.heat = s.meta.heat
+                        s2.meta.state = s.meta.state
+                        s2.meta.cold_since = s.meta.cold_since
+                        s2.meta.updated_at = s.meta.updated_at
+                        # 直接 _atomic_write：write_session 会再 lock 死锁
+                        storage._atomic_write(
+                            storage.session_path(session_id),
+                            storage._dump_frontmatter(s2.meta) + s2.body,
+                        )
+                except (storage.SessionNotFound, storage.SessionCorrupt, OSError):
+                    pass

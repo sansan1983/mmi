@@ -35,6 +35,10 @@ __all__ = [
     "get_llm_config",
     "set_llm_config",
     "resolve_api_key",
+    "mask_api_key",
+    "API_KEY_SOURCE_ENV",
+    "API_KEY_SOURCE_KEYRING",
+    "API_KEY_SOURCE_PLAIN",
 ]
 
 
@@ -46,6 +50,14 @@ DEFAULT_MODEL = "gpt-4o-mini"
 # 覆盖：gpt-4o-mini / claude-3-5-sonnet / qwen2.5-7b / deepseek_chat
 # 不允许：空格 / 路径分隔（/）/ URL 风格（:）/ shell 特殊（$ ; 等）/ 非 ASCII
 _MODEL_NAME_PATTERN = re.compile(r"^[A-Za-z0-9._\-]{1,128}$")
+
+# API Key 来源标记（供 config show 遮蔽显示）
+API_KEY_SOURCE_ENV = "env"
+API_KEY_SOURCE_KEYRING = "keyring"
+API_KEY_SOURCE_PLAIN = "plain"
+
+# 环境变量引用语法：config.toml 中写 ${VAR_NAME}，运行时从 os.environ 取
+_ENV_REF_PATTERN = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}\s*$")
 
 
 # ---------------------------------------------------------------------------
@@ -215,14 +227,32 @@ def set_llm_config(
 def resolve_api_key(provider: str | None) -> str:
     """按 provider 解析 api_key,优先级:
       1. config.toml [llm].api_key(用户显式配)
+         - 若为 ${ENV_VAR} 格式 → 从 os.environ 取
+         - 若为 keyring:// 格式 → 从 keyring 取
       2. 环境变量 <PROVIDER>_API_KEY(回退)
       3. 空字符串(用户得配)
 
     provider 为 None 或未知 → 只查 config。
     """
     cfg = get_llm_config()
-    if cfg["api_key"]:
-        return cfg["api_key"]
+    raw_key = cfg["api_key"]
+
+    # 解析 ${ENV_VAR} 语法
+    m = _ENV_REF_PATTERN.match(raw_key)
+    if m:
+        env_name = m.group(1)
+        return os.environ.get(env_name, "")
+
+    # 解析 keyring:// 语法
+    if raw_key.startswith("keyring://"):
+        keyring_key = raw_key[len("keyring://"):]
+        return _get_keyring_password(keyring_key)
+
+    # 明文 key（向后兼容）
+    if raw_key:
+        return raw_key
+
+    # 无 config key → 回退到环境变量
     if provider:
         try:
             info = get_provider(provider)
@@ -231,4 +261,88 @@ def resolve_api_key(provider: str | None) -> str:
                 return env_k
         except ValueError:
             pass
+        # provider 未知 → 也尝试通用 <PROVIDER>_API_KEY（兼容性兜底）
+        generic_env = f"{provider.upper()}_API_KEY"
+        env_k = os.environ.get(generic_env, "")
+        if env_k:
+            return env_k
     return ""
+
+
+def _get_keyring_password(service: str) -> str:
+    """从 keyring 取密码（失败返回空字符串，不抛）。"""
+    try:
+        import keyring as _kr
+        return _kr.get_password("mmi", service) or ""
+    except Exception:
+        return ""
+
+
+
+def _set_keyring_password(service: str, password: str) -> bool:
+    """存密码到 keyring（失败返回 False，不抛）。"""
+    try:
+        import keyring as _kr
+        _kr.set_password("mmi", service, password)
+        return True
+    except Exception:
+        return False
+
+
+def mask_api_key(key: str, visible_chars: int = 3) -> str:
+    """把 api_key 遮蔽为 sk-***XXXX（安全显示）。
+
+    Args:
+        key: 原始 api_key（空时返回空字符串）。
+        visible_chars: 末尾可见字符数（默认 3）。
+
+    Returns:
+        遮蔽后的字符串，例如 "sk-***abc" 或 "sk-***"（key 过短时）。
+    """
+    if not key:
+        return ""
+    prefix = "sk-"
+    if key.startswith(prefix):
+        key_body = key[len(prefix):]
+    else:
+        key_body = key
+    if len(key_body) <= visible_chars:
+        return "sk-***"
+    return f"sk-***{key_body[-visible_chars:]}"
+
+
+def get_api_key_source(key: str) -> str:
+    """判断 api_key 的存储来源类型。
+
+    Returns:
+        API_KEY_SOURCE_ENV | API_KEY_SOURCE_KEYRING | API_KEY_SOURCE_PLAIN
+    """
+    if not key:
+        return API_KEY_SOURCE_PLAIN
+    if _ENV_REF_PATTERN.match(key):
+        return API_KEY_SOURCE_ENV
+    if key.startswith("keyring://"):
+        return API_KEY_SOURCE_KEYRING
+    return API_KEY_SOURCE_PLAIN
+
+
+def store_api_key(api_key: str, *, use_keyring: bool = False) -> bool:
+    """安全存储 api_key。
+
+    Args:
+        api_key: 要存储的 key（可带 ${ENV_VAR} 前缀）
+        use_keyring: True 时强制存 keyring（忽略 api_key 内容）
+
+    Returns:
+        True = 存储成功；False = 失败（不抛）
+    """
+    if use_keyring:
+        # 生成确定性 service 名（基于 provider）
+        cfg = get_llm_config()
+        provider = cfg.get("provider", "default")
+        ok = _set_keyring_password(provider, api_key)
+        if ok:
+            # config.toml 只存引用，不存明文
+            return set_llm_config(api_key=f"keyring://{provider}")
+        return False
+    return set_llm_config(api_key=api_key)

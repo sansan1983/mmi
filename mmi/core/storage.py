@@ -326,7 +326,7 @@ def _atomic_write(path: Path, content: str) -> None:
             f.write(content)
         # Windows 上 rename 不覆盖现有文件，需要先 unlink
         if path.exists():
-            path.unlink()
+            _unlink_with_retry(path)
         Path(tmp_name).rename(path)
     except Exception:
         # 清理临时文件
@@ -335,6 +335,20 @@ def _atomic_write(path: Path, content: str) -> None:
         except OSError:
             pass
         raise
+
+
+def _unlink_with_retry(path: Path, max_retries: int = 3, base_delay: float = 0.05) -> None:
+    """Windows 并发 safe unlink，加指数退避。"""
+    import time as _time
+    for attempt in range(max_retries):
+        try:
+            path.unlink()
+            return
+        except PermissionError:
+            if attempt < max_retries - 1:
+                _time.sleep(base_delay * (2 ** attempt))
+            else:
+                path.unlink()  # 最后一次直接抛
 
 
 def write_session(session: Session) -> None:
