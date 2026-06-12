@@ -175,17 +175,41 @@ def is_trash(result: ClassificationResult) -> bool:
 
 
 def _build_prompt(turns: list[dict], *, language: str) -> str:
-    """给 LLM 的分类 prompt。"""
+    """给 LLM 的分类 prompt（P2-3 滑动窗口采样）。
+
+    策略：从对话的前、中、后三段各取最多 3 条 user message，
+    避免只看到开头的 chitchat 而误判整个会话。
+    总条数上限 9 条，每条截断到 200 字符（比旧版 300 更紧，因为条数更多）。
+    """
     user_msgs = [t.get("content", "") for t in turns if t.get("role") == "user"]
-    # 控制总长度
-    conversation = "\n".join(f"- {msg[:300]}" for msg in user_msgs[:10])
+    n = len(user_msgs)
+    
+    if n == 0:
+        sampled = []
+    elif n <= 9:
+        # 短对话：全部使用
+        sampled = user_msgs
+    else:
+        # 长对话：前 3 + 中 3 + 后 3
+        mid_start = n // 2 - 1
+        sampled = user_msgs[:3] + user_msgs[mid_start:mid_start+3] + user_msgs[-3:]
+        # 去重（可能重叠）
+        seen = set()
+        deduped = []
+        for msg in sampled:
+            if msg not in seen:
+                seen.add(msg)
+                deduped.append(msg)
+        sampled = deduped
+    
+    conversation = "\n".join(f"- {msg[:200]}" for msg in sampled)
 
     if language.startswith("zh"):
         return (
             "判断下面的多轮对话是否在讨论一个具体的主题 / 项目 / 问题。\n"
             "如果只是寒暄（你好 / 天气 / 笑话 / 随口问的琐事），回答 no。\n"
             "如果在认真讨论一个具体话题（代码 / 写作 / 学习 / 设计 / 决策），回答 yes。\n\n"
-            f"对话内容：\n{conversation}\n\n"
+            f"对话内容（已从全程采样）：\n{conversation}\n\n"
             "只回答 yes 或 no。"
         )
     return (
@@ -194,6 +218,6 @@ def _build_prompt(turns: list[dict], *, language: str) -> str:
         "If it's just chitchat (greetings, weather, jokes, casual small talk), answer no.\n"
         "If it's a real discussion of a concrete topic (code, writing, learning, design, "
         "decision), answer yes.\n\n"
-        f"Conversation:\n{conversation}\n\n"
+        f"Conversation (sampled from full history):\n{conversation}\n\n"
         "Answer only yes or no."
     )
