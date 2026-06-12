@@ -7,22 +7,27 @@ from textual.containers import Vertical
 from textual.widgets import Static
 
 from ..core import paths as paths_module
+from ..core.config import get_theme, set_theme
 from ..core.manager import SessionManager
 from .history import HistoryStore
 from .screens.list import SessionListView
 from .screens.chat import ChatView
-from .theme_css import THEME_CSS
+from .theme_css import DARK_CSS, LIGHT_CSS
 
 __all__ = ["CTrimApp", "run_tui"]
 
 
 class CTrimApp(App):
-    CSS = THEME_CSS
+    """MMI TUI 应用程序。"""
+    
+    # 主题设置：'dark' 或 'light'
+    _theme = "dark"
 
     BINDINGS = [
         ("escape", "show_list", "列表"),
         ("f2", "show_list", "列表"),
         ("f3", "show_chat", "聊天"),
+        ("t", "toggle_theme", "切换主题"),
     ]
 
     def __init__(self, mgr: SessionManager | None = None) -> None:
@@ -30,6 +35,8 @@ class CTrimApp(App):
         self.mgr = mgr if mgr is not None else SessionManager()
         self._history = HistoryStore()
         self._active_session_id: str | None = None
+        # 从配置加载主题设置
+        self._theme = get_theme()
 
     def compose(self):
         yield Static("● ● ●  MMI — memory mesh interface", id="term-titlebar")
@@ -43,7 +50,22 @@ class CTrimApp(App):
         except OSError:
             pass
         self._history.load()
+        self._apply_theme()
         self._show_list_view()
+
+    def _apply_theme(self) -> None:
+        """应用当前主题 CSS。"""
+        css = DARK_CSS if self._theme == "dark" else LIGHT_CSS
+        self.stylesheet.source = css
+        self.stylesheet.reparse()
+        self.refresh()
+
+    def action_toggle_theme(self) -> None:
+        """切换暗色/亮色主题。"""
+        self._theme = "light" if self._theme == "dark" else "dark"
+        # 保存主题设置到配置
+        set_theme(self._theme)
+        self._apply_theme()
 
     def _show_list_view(self) -> None:
         try:

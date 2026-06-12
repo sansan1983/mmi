@@ -39,6 +39,8 @@ __all__ = [
     "API_KEY_SOURCE_ENV",
     "API_KEY_SOURCE_KEYRING",
     "API_KEY_SOURCE_PLAIN",
+    "get_theme",
+    "set_theme",
 ]
 
 
@@ -346,3 +348,37 @@ def store_api_key(api_key: str, *, use_keyring: bool = False) -> bool:
             return set_llm_config(api_key=f"keyring://{provider}")
         return False
     return set_llm_config(api_key=api_key)
+
+
+def get_theme() -> str:
+    """返回当前主题设置（'dark' 或 'light'）。
+
+    优先级：
+      1. 配置文件 ui.theme
+      2. 缺省值 'dark'
+    """
+    cfg = load_config()
+    ui_section = cfg.get("ui", {})
+    if isinstance(ui_section, dict):
+        theme = ui_section.get("theme")
+        if theme in ("dark", "light"):
+            return theme
+    return "dark"
+
+
+def set_theme(theme: str) -> bool:
+    """把主题设置写到 config.toml 的 [ui].theme。
+
+    Args:
+        theme: 'dark' 或 'light'
+
+    Returns:
+        True 写盘成功；False 任何 OSError
+    """
+    if theme not in ("dark", "light"):
+        return False
+    cfg = load_config()
+    if "ui" not in cfg or not isinstance(cfg.get("ui"), dict):
+        cfg["ui"] = {}
+    cfg["ui"]["theme"] = theme
+    return save_config(cfg)
