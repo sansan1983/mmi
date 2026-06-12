@@ -1,0 +1,40 @@
+"""mmi tui-python — 启动新版 Python TUI（Textual）。"""
+
+from __future__ import annotations
+
+import sys
+
+import portalocker
+
+from mmi.cli import ensure_mmi_home
+from mmi.core import paths
+
+
+def cmd_tui_python(args, mgr) -> int:
+    """启动 Textual TUI（mmi.tui.run_tui）。"""
+    ensure_mmi_home()
+
+    # 单实例锁
+    paths.ensure_dirs()
+    lock_path = paths.get_root() / "run" / "tui.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock = portalocker.Lock(
+        str(lock_path),
+        mode="w",
+        timeout=0.0,
+        flags=portalocker.LOCK_EX | portalocker.LOCK_NB,
+    )
+    try:
+        lock.acquire()
+    except portalocker.LockException:
+        print(f"[tui] 已有另一个 TUI 在运行（lock: {lock_path}）。", file=sys.stderr)
+        return 1
+
+    try:
+        from mmi.tui import run_tui
+        run_tui()
+        return 0
+    except KeyboardInterrupt:
+        return 0
+    finally:
+        lock.release()

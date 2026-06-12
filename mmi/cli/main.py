@@ -46,6 +46,7 @@ from mmi.cli.commands.archive import cmd_archive  # noqa: E402
 from mmi.cli.commands.delete import cmd_delete  # noqa: E402
 from mmi.cli.commands.gc import cmd_gc  # noqa: E402
 from mmi.cli.commands.tui import cmd_tui  # noqa: E402
+from mmi.cli.commands.tui_python import cmd_tui_python  # noqa: E402
 from mmi.cli.commands.rename import cmd_rename  # noqa: E402
 from mmi.cli.commands.info import cmd_info  # noqa: E402
 from mmi.cli.commands.inspect import cmd_inspect  # noqa: E402
@@ -121,6 +122,9 @@ def build_parser() -> argparse.ArgumentParser:
     # tui
     p_tui = sub.add_parser("tui", help="启动 TUI（TypeScript + Ink）")
     p_tui.add_argument("--build", action="store_true", help="强制重新构建 tui-ts bundle")
+
+    # tui-python
+    sub.add_parser("tui-python", help="启动新版 Python TUI（Textual）")
 
     # doctor
     sub.add_parser("doctor", help="系统诊断")
@@ -276,6 +280,8 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_skill(args, mgr)
     if args.command == "tui":
         return cmd_tui(args, mgr)
+    if args.command == "tui-python":
+        return cmd_tui_python(args, mgr)
 
     # 6) 无子命令：显示帮助
     print(i18n.t("cli.usage") + ":")
