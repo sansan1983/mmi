@@ -527,3 +527,52 @@ def test_chat_recomputes_heat(mgr, isolated_home):
     # 新建会话默认 access=1 + 刚刚访问 → heat 至少 11
     assert s1.meta.heat > initial_heat
     assert s1.meta.heat == 11.0 or s1.meta.heat >= 10.0  # active 阈值
+
+
+# ---- stream_chat 测试 -------------------------------------------------
+
+
+def test_stream_chat_yields_echo(mgr, isolated_home):
+    """stream_chat 应 yield EchoLLM 的回复并写入会话历史。"""
+    sid = mgr.create()
+    chunks = list(mgr.stream_chat(sid, "ping"))
+    full = "".join(chunks)
+    assert full.startswith("[echo]")
+    assert "ping" in full
+
+
+def test_stream_chat_writes_turn(mgr, isolated_home):
+    """流式结束后 turn 应落盘。"""
+    sid = mgr.create()
+    list(mgr.stream_chat(sid, "hello"))
+    s = mgr.get(sid)
+    assert s.body.count("**User:**") == 1
+    assert s.body.count("**Assistant:**") == 1
+
+
+def test_stream_chat_multiple_turns(mgr, isolated_home):
+    """多次 stream_chat 后会话应有多个 turn。"""
+    sid = mgr.create()
+    list(mgr.stream_chat(sid, "a"))
+    list(mgr.stream_chat(sid, "b"))
+    list(mgr.stream_chat(sid, "c"))
+    s = mgr.get(sid)
+    assert s.body.count("**User:**") == 3
+    assert s.body.count("**Assistant:**") == 3
+
+
+def test_stream_chat_unknown_session_raises(mgr, isolated_home):
+    """不存在的 session_id 应抛 SessionNotFound。"""
+    fake_ulid = "01JH2K3N4P5Q6R7S8T9VWXYZAB"
+    with pytest.raises(storage.SessionNotFound):
+        list(mgr.stream_chat(fake_ulid, "hi"))
+
+
+def test_stream_chat_increments_access(mgr, isolated_home):
+    """stream_chat 后 access_count 应递增。"""
+    sid = mgr.create()
+    before = mgr.get(sid).meta.access_count
+    list(mgr.stream_chat(sid, "test"))
+    after = mgr.get(sid).meta.access_count
+    assert after == before + 1
+

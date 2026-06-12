@@ -12,7 +12,6 @@ from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Static, TextArea
 
 from ...core import config as cfg_module
-from ...core.llm import get_default_provider
 from ...core.storage import parse_turns
 
 if TYPE_CHECKING:
@@ -177,10 +176,17 @@ class ChatView(Vertical):
             self.set_busy(False)
             return
         try:
-            async for chunk in get_default_provider().stream_chat([{"role": "user", "content": text}]):
-                turn.append_content(chunk)
-                self.query_one("#msg-area", VerticalScroll).scroll_end(animate=False)
-                await asyncio.sleep(0)
+            app: CTrimApp = self.app
+            mgr = app.mgr
+            sid = app._active_session_id
+            if sid:
+                # 走 manager.stream_chat：流式 + 会话历史一体化
+                for chunk in mgr.stream_chat(sid, text):
+                    turn.append_content(chunk)
+                    self.query_one("#msg-area", VerticalScroll).scroll_end(animate=False)
+                    await asyncio.sleep(0)
+            else:
+                turn.append_content("[no active session]")
         except Exception as e:
             turn.append_content(f"\n[error: {e}]")
         turn._meta = f"~{len(turn._content) // 4} tok  {ts}"

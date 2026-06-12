@@ -19,7 +19,12 @@ from __future__ import annotations
 
 import logging
 import threading
+from collections.abc import Iterator
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    pass
 
 from . import classifier as cls_module
 from . import heat as heat_module
@@ -446,6 +451,112 @@ class SessionManager:
             trashed=trashed,
             trashed_reason=trashed_reason,
         )
+
+    def stream_chat(
+        self,
+        session_id: str,
+        user_input: str,
+        *,
+        language: str | None = None,
+    ) -> Iterator[str]:
+        """流式对话入口 —— 每轮 yield 一个 chunk，最后一轮 yield 后写入会话历史。
+
+        流程与 chat() 一致（context → LLM → 写入 → checkpoint），区别在于：
+          - LLM 调用走 stream_chat() 而非 chat()，逐步 yield
+          - 每个 chunk 不写盘，攒完后一次性 append_turn
+          - checkpoint（classifier / titler / summary / heat / gc）在流结束后执行
+
+        Args:
+            session_id: 目标会话
+            user_input: 用户输入
+            language: 输出语言（默认读 i18n.get_lang()）
+
+        Yields:
+            文本片段（str）
+
+        Raises:
+            SessionNotFound: 会话不存在
+        """
+        if language is None:
+            from . import i18n
+            language = i18n.get_lang()
+
+        # 1) 验证会话
+        storage.read_meta(session_id)
+
+        # 2) 构建 context
+        config = context.LoaderConfig()
+        ctx = context.build_context_detailed(
+            session_id, user_input, config=config, language=language
+        )
+        messages = ctx.messages
+        _context_truncated = ctx.truncated  # noqa: F841
+
+        # 3) 流式 LLM 调用，收集完整 reply
+        chunks: list[str] = []
+        try:
+            for chunk in self.llm.stream_chat(messages):
+                chunks.append(chunk)
+                yield chunk
+        except LLMError as e:
+            chunks = [f"[LLM error: {e}]"]
+            yield chunks[0]
+
+        reply = "".join(chunks)
+
+        # 4) 一次性写入 turn
+        s = storage.append_turn(session_id, user_input, reply)
+
+        # 5) 跨会话记忆入库
+        try:
+            summarizer._schedule_memory_store(session_id)
+        except Exception:
+            pass
+
+        # 6) 摘要更新检查
+        try:
+            will_update = summarizer.should_update_summary(s.meta, s.body)
+        except Exception:
+            will_update = False
+        if will_update:
+            summarizer.schedule_summary_update(
+                session_id, self.llm, language=language
+            )
+
+        # 7) classifier / titler checkpoint
+        trashed = False
+        _trashed_reason = ""  # noqa: F841
+        _title_updated = False  # noqa: F841
+
+        n_user = storage.count_user_turns(s.body)
+
+        if n_user in _CLASSIFY_AT_TURNS:
+            turns = storage.parse_turns(s.body)
+            result = cls_module.classify_session(turns, self.llm, language=language)
+            if cls_module.is_trash(result):
+                storage.move_to_trash(session_id)
+                trashed = True
+                _trashed_reason = result.reason  # noqa: F841
+
+        if (not trashed) and n_user in _TITLE_AT_TURNS:
+            turns = storage.parse_turns(s.body)
+            new_title = titler.generate_title(turns, self.llm, language=language)
+            cur = s.meta.title
+            if new_title and new_title != cur:
+                s.meta.title = new_title
+                storage.write_session(s)
+                _title_updated = True  # noqa: F841
+
+        # 8) heat 重算
+        if not trashed:
+            self._recompute_heat(session_id)
+
+        # 9) GC daemon 通知
+        try:
+            from . import gc_daemon as _gc_daemon
+            _gc_daemon._get_gc_daemon().on_chat_done()
+        except Exception:
+            pass
 
     # ----- 删 / 归档 / 杂项 ------------------------------------------------
 
