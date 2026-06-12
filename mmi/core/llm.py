@@ -36,7 +36,7 @@ import os
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, AsyncIterator
 
 if TYPE_CHECKING:
     from mmi.agent.result import ChatResult
@@ -880,9 +880,6 @@ def reset_default_provider_for_test() -> None:
 #   - 类方法 LLMProvider.stream_chat → 同步生成器,直接传 OpenAI messages
 #   - 模块函数 stream_chat → AsyncIterator,IPC server 用
 # 命名空间不冲突(一个是 self.stream_chat,一个是 mmi.core.llm.stream_chat)。
-
-
-from typing import AsyncIterator
 
 
 async def stream_chat(session_id: str, content: str) -> AsyncIterator[str]:

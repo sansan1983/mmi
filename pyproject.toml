@@ -26,11 +26,12 @@ test = ["pytest>=8.0"]
 memory = [
     "faiss-cpu>=1.7",
     "numpy>=1.24",
+    "sentence-transformers>=2.0",
 ]
 context = ["tiktoken>=0.5"]
 
 [project.scripts]
-mmi = "mmi.cli:main"
+mmi = "mmi.cli.main:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
