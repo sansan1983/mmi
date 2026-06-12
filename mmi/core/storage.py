@@ -23,6 +23,7 @@ from __future__ import annotations
 import re
 import shutil
 import tempfile
+from collections import OrderedDict
 from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import datetime
@@ -57,6 +58,102 @@ __all__ = [
     "parse_turns",
     "count_user_turns",
 ]
+
+# ---------------------------------------------------------------------------
+# LRU 缓存（P2-1）
+# ---------------------------------------------------------------------------
+
+_MAX_CACHE_SIZE = 20  # 最多缓存 20 个 session；后续从 config.toml 读取
+_session_cache: OrderedDict[str, tuple[float, "Session"]] = OrderedDict()
+_meta_cache: OrderedDict[str, tuple[float, "SessionMeta"]] = OrderedDict()
+_cache_lock = __import__("threading").RLock()
+
+
+def _cache_get_session(session_id: str):
+    """从缓存获取 Session；若文件已被修改（mtime 不匹配）则返回 None。
+    
+    返回对象的深拷贝，防止调用方修改污染缓存。
+    """
+    import copy
+    with _cache_lock:
+        if session_id not in _session_cache:
+            return None
+        cached_mtime, session = _session_cache[session_id]
+        try:
+            actual_mtime = session_path(session_id).stat().st_mtime
+        except OSError:
+            _session_cache.pop(session_id, None)
+            return None
+        if actual_mtime != cached_mtime:
+            _session_cache.pop(session_id, None)
+            return None
+        _session_cache.move_to_end(session_id)
+        return copy.deepcopy(session)
+
+
+def _cache_get_meta(session_id: str):
+    """从缓存获取 SessionMeta；mtime 不匹配则返回 None。
+    
+    返回对象的深拷贝，防止调用方修改污染缓存。
+    """
+    import copy
+    with _cache_lock:
+        if session_id not in _meta_cache:
+            return None
+        cached_mtime, meta = _meta_cache[session_id]
+        try:
+            actual_mtime = session_path(session_id).stat().st_mtime
+        except OSError:
+            _meta_cache.pop(session_id, None)
+            return None
+        if actual_mtime != cached_mtime:
+            _meta_cache.pop(session_id, None)
+            return None
+        _meta_cache.move_to_end(session_id)
+        return copy.deepcopy(meta)
+
+
+def _cache_set_session(session_id: str, session: "Session") -> None:
+    """写入缓存；若已满则淘汰 LRU（队首）。"""
+    with _cache_lock:
+        try:
+            mtime = session_path(session_id).stat().st_mtime
+        except OSError:
+            return
+        _session_cache[session_id] = (mtime, session)
+        _session_cache.move_to_end(session_id)
+        if len(_session_cache) > _MAX_CACHE_SIZE:
+            _session_cache.popitem(last=False)
+
+
+def _cache_set_meta(session_id: str, meta: "SessionMeta") -> None:
+    """写入 meta 缓存。"""
+    with _cache_lock:
+        try:
+            mtime = session_path(session_id).stat().st_mtime
+        except OSError:
+            return
+        _meta_cache[session_id] = (mtime, meta)
+        _meta_cache.move_to_end(session_id)
+        if len(_meta_cache) > _MAX_CACHE_SIZE:
+            _meta_cache.popitem(last=False)
+
+
+def _cache_invalidate(session_id: str) -> None:
+    """使缓存失效（写入后调用）。"""
+    with _cache_lock:
+        _session_cache.pop(session_id, None)
+        _meta_cache.pop(session_id, None)
+
+
+def _cache_invalidate_all() -> None:
+    """清空全部缓存（如外部直接改了磁盘文件）。"""
+    with _cache_lock:
+        _session_cache.clear()
+        _meta_cache.clear()
+
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -277,20 +374,30 @@ def read_meta(session_id: str) -> SessionMeta:
     """只读 frontmatter，构造 SessionMeta（不读正文）。
 
     用途：list_sessions 时大量调用，必须轻量。
+    优先走 LRU 缓存（mtime 校验）。
     """
+    cached = _cache_get_meta(session_id)
+    if cached is not None:
+        return cached
     p = session_path(session_id)
     if not p.exists():
         raise SessionNotFound(session_id)
     text = p.read_text(encoding="utf-8")
     meta_dict, _ = _parse_frontmatter(text, session_id)
-    return SessionMeta.from_dict(meta_dict)
+    meta = SessionMeta.from_dict(meta_dict)
+    _cache_set_meta(session_id, meta)
+    return meta
 
 
 def read_session(session_id: str) -> Session:
     """读全文：frontmatter + body → Session。
 
     用途：chat 流程里需要正文。
+    优先走 LRU 缓存（mtime 校验）。
     """
+    cached = _cache_get_session(session_id)
+    if cached is not None:
+        return cached
     p = session_path(session_id)
     if not p.exists():
         raise SessionNotFound(session_id)
@@ -300,7 +407,9 @@ def read_session(session_id: str) -> Session:
     # 兜底：如果文件里没有 session_id 字段，用文件名补
     if not meta.session_id:
         meta.session_id = session_id
-    return Session(meta=meta, body=body)
+    s = Session(meta=meta, body=body)
+    _cache_set_session(session_id, s)
+    return s
 
 
 # ---------------------------------------------------------------------------
@@ -365,6 +474,10 @@ def write_session(session: Session) -> None:
         _atomic_write(session_path(sid), content)
         # 同步元数据中的 updated_at
         session.meta.updated_at = utcnow_iso()
+        # 使缓存失效（文件已更新）
+        _cache_invalidate(sid)
+        # 重新缓存最新内容
+        _cache_set_session(sid, session)
 
 
 def update_access(session_id: str) -> SessionMeta:
@@ -390,6 +503,10 @@ def update_access(session_id: str) -> SessionMeta:
         # 只写 frontmatter 部分，不动 body（state 已写入 meta）
         content = _dump_frontmatter(s.meta) + s.body
         _atomic_write(session_path(session_id), content)
+        # 使缓存失效并重新写入
+        _cache_invalidate(session_id)
+        _cache_set_meta(session_id, s.meta)
+        _cache_set_session(session_id, s)
         return s.meta
 
 
@@ -416,6 +533,9 @@ def append_turn(
         # 重写全文
         content = _dump_frontmatter(s.meta) + s.body
         _atomic_write(session_path(session_id), content)
+        # 使缓存失效并重新写入
+        _cache_invalidate(session_id)
+        _cache_set_session(session_id, s)
         return s
 
 
