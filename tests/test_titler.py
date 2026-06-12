@@ -161,3 +161,80 @@ def test_generate_title_no_user_turns_returns_heuristic_untitled():
     # 没有 user 直接走 heuristic，最终是 untitled
     assert title == "untitled"
     assert llm.calls == 0
+
+
+# ---------------------------------------------------------------------------
+# extract_keywords / detect_topic_drift (P2-4)
+# ---------------------------------------------------------------------------
+
+from mmi.core.titler import extract_keywords, detect_topic_drift
+
+
+def test_extract_keywords_empty_turns():
+    assert extract_keywords([]) == set()
+
+
+def test_extract_keywords_zh():
+    turns = [
+        {"role": "user", "content": "我在写一个 Python 爬虫"},
+        {"role": "user", "content": "用 requests 库"},
+    ]
+    keywords = extract_keywords(turns, language="zh-CN")
+    # 应该包含 "python"、"爬虫"、"requests" 等（2-gram 或单字）
+    assert len(keywords) > 0
+    # 不应包含停用词
+    assert "我" not in keywords
+    assert "的" not in keywords
+
+
+def test_extract_keywords_en():
+    turns = [
+        {"role": "user", "content": "How to design a postgres sharding strategy?"},
+    ]
+    keywords = extract_keywords(turns, language="en-US")
+    assert "postgres" in keywords or "sharding" in keywords
+    assert "how" not in keywords  # 停用词
+
+
+def test_detect_topic_drift_no_drift():
+    """话题没变 → 返回 False。"""
+    turns = [
+        {"role": "user", "content": "Python 爬虫怎么写"},
+        {"role": "assistant", "content": "用 requests"},
+        {"role": "user", "content": "爬虫并发怎么处理"},
+        {"role": "assistant", "content": "用 asyncio"},
+        {"role": "user", "content": "爬虫数据存储用什么"},
+    ]
+    # 关键词都是「爬虫」相关，相似度应该很高
+    assert detect_topic_drift(turns, threshold=0.3, language="zh-CN") == False
+
+
+def test_detect_topic_drift_with_drift():
+    """话题从 Python 爬虫切换到 JavaScript 前端 → 返回 True。"""
+    turns = [
+        # 早期：Python 爬虫
+        {"role": "user", "content": "Python 爬虫怎么写"},
+        {"role": "user", "content": "用 requests 库"},
+        {"role": "user", "content": "爬虫并发处理"},
+        {"role": "user", "content": "数据存储"},
+        {"role": "user", "content": "部署爬虫"},
+        # 近期：JavaScript 前端（完全不同话题）
+        {"role": "user", "content": "React 组件怎么写"},
+        {"role": "user", "content": "JavaScript 异步处理"},
+        {"role": "user", "content": "前端路由配置"},
+        {"role": "user", "content": "CSS 布局技巧"},
+        {"role": "user", "content": "Webpack 打包优化"},
+    ]
+    # 早期关键词：「爬虫、python、requests、并发、数据、部署」
+    # 近期关键词：「react、javascript、异步、路由、css、webpack」
+    # 几乎没有重叠 → 相似度很低 → 检测到偏移
+    assert detect_topic_drift(turns, threshold=0.3, language="zh-CN") == True
+
+
+def test_detect_topic_drift_too_short():
+    """对话太短（< early_window + recent_window）→ 不检测，返回 False。"""
+    turns = [
+        {"role": "user", "content": "short conversation"},
+        {"role": "user", "content": "only 2 turns"},
+    ]
+    assert detect_topic_drift(turns, threshold=0.3, language="en-US") == False

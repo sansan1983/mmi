@@ -24,6 +24,7 @@ from .llm import LLMError, LLMProvider
 __all__ = [
     "generate_title",
     "heuristic_title",
+    "detect_topic_drift",
     "TITLE_MAX_TRIES",
     "TITLE_MIN_WORDS",
     "TITLE_MAX_WORDS",
@@ -125,22 +126,89 @@ def heuristic_title(
       - 分词 + 去停用词 + 词频统计
       - 取前 3-5 个最高频的词拼成标题
     """
-    user_messages = [t.get("content", "") for t in turns if t.get("role") == "user"]
-    user_messages = user_messages[:3]
+    keywords = extract_keywords(turns, max_turns=3, language=language)
+    if not keywords:
+        return _truncate_raw(
+            next((t.get("content", "") for t in turns if t.get("role") == "user"), ""),
+            language=language,
+        )
+    title = " ".join(list(keywords)[:TITLE_MAX_WORDS])
+    return _truncate_words(title, language=language)
+
+
+def extract_keywords(
+    turns: list[dict],
+    *,
+    max_turns: int = 5,
+    language: str = "zh-CN",
+) -> set[str]:
+    """从 turns 中提取关键词集合（供话题偏移检测用）。
+
+    Args:
+        turns: 完整 turn 列表
+        max_turns: 最多取前 N 条 user 消息
+        language: 语言
+
+    Returns:
+        去停用词后的关键词集合。
+    """
+    user_messages = [
+        t.get("content", "") for t in turns
+        if t.get("role") == "user"
+    ]
+    user_messages = user_messages[:max_turns]
     if not user_messages:
-        return "untitled"
+        return set()
 
     text = " ".join(user_messages)
     tokens = _tokenize(text, language=language)
-    tokens = _filter_stopwords(tokens, language=language)
-    if not tokens:
-        # 全是停用词（极端情况：用户只说"你好"）→ 退回到原文前 N 字
-        return _truncate_raw(user_messages[0], language=language)
+    return set(_filter_stopwords(tokens, language=language))
 
-    counter = Counter(tokens)
-    top = [w for w, _ in counter.most_common(TITLE_MAX_WORDS)]
-    title = " ".join(top)
-    return _truncate_words(title, language=language)
+
+def detect_topic_drift(
+    turns: list[dict],
+    *,
+    early_window: int = 5,
+    recent_window: int = 5,
+    threshold: float = 0.3,
+    language: str = "zh-CN",
+) -> bool:
+    """检测话题是否发生偏移。
+
+    策略：
+      1. 取前 early_window 条 user 消息作为「原始话题」
+      2. 取后 recent_window 条 user 消息作为「当前话题」
+      3. 提取两组关键词，计算 Jaccard 相似度
+      4. 相似度 < threshold → 认为偏移
+
+    Args:
+        turns: 完整 turn 列表
+        early_window: 原始话题取前 N 条
+        recent_window: 当前话题取后 N 条
+        threshold: 相似度阈值（< threshold 认为偏移）
+        language: 语言
+
+    Returns:
+        True 如果检测到话题偏移。
+    """
+    if len(turns) < early_window + recent_window:
+        return False  # 对话太短，不检测
+
+    early_turns = turns[:early_window]
+    recent_turns = turns[-recent_window:]
+
+    early_keywords = extract_keywords(early_turns, max_turns=early_window, language=language)
+    recent_keywords = extract_keywords(recent_turns, max_turns=recent_window, language=language)
+
+    if not early_keywords or not recent_keywords:
+        return False
+
+    # Jaccard 相似度 = |A ∩ B| / |A ∪ B|
+    intersection = len(early_keywords & recent_keywords)
+    union = len(early_keywords | recent_keywords)
+    similarity = intersection / union if union > 0 else 0.0
+
+    return similarity < threshold
 
 
 # ---------------------------------------------------------------------------

@@ -421,14 +421,19 @@ class SessionManager:
                 trashed_reason = result.reason
 
         # Titler checkpoint（在 trash 检查后：万一被 trash 了就不再 titler）
+        # P2-4: 首次（10轮）一定生成；后续只在话题偏移时才生成
         if (not trashed) and n_user in _TITLE_AT_TURNS:
             turns = storage.parse_turns(s.body)
-            new_title = titler.generate_title(turns, self.llm, language=language)
-            cur = s.meta.title
-            if new_title and new_title != cur:
-                s.meta.title = new_title
-                storage.write_session(s)
-                title_updated = True
+            should_retitle = (n_user == 10) or titler.detect_topic_drift(
+                turns, language=language
+            )
+            if should_retitle:
+                new_title = titler.generate_title(turns, self.llm, language=language)
+                cur = s.meta.title
+                if new_title and new_title != cur:
+                    s.meta.title = new_title
+                    storage.write_session(s)
+                    title_updated = True
 
         # 6) heat 重算（Phase 4：ARCHITECTURE §8.4）
         #    被 trash 的会话不重算（不参与主列表排序）
@@ -538,14 +543,19 @@ class SessionManager:
                 trashed = True
                 _trashed_reason = result.reason  # noqa: F841
 
+        # Titler checkpoint（P2-4: 首次一定生成，后续只在偏移时生成）
         if (not trashed) and n_user in _TITLE_AT_TURNS:
             turns = storage.parse_turns(s.body)
-            new_title = titler.generate_title(turns, self.llm, language=language)
-            cur = s.meta.title
-            if new_title and new_title != cur:
-                s.meta.title = new_title
-                storage.write_session(s)
-                _title_updated = True  # noqa: F841
+            should_retitle = (n_user == 10) or titler.detect_topic_drift(
+                turns, language=language
+            )
+            if should_retitle:
+                new_title = titler.generate_title(turns, self.llm, language=language)
+                cur = s.meta.title
+                if new_title and new_title != cur:
+                    s.meta.title = new_title
+                    storage.write_session(s)
+                    _title_updated = True  # noqa: F841
 
         # 8) heat 重算
         if not trashed:
