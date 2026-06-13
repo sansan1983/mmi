@@ -11,7 +11,7 @@ from mmi.core import paths
 
 
 def cmd_tui_python(args, mgr) -> int:
-    """启动 Textual TUI（mmi.tui.run_tui）。"""
+    """启动 TUI v3（mmi.tui_v3.run_tui）。"""
     ensure_mmi_home()
 
     # 单实例锁
@@ -31,9 +31,8 @@ def cmd_tui_python(args, mgr) -> int:
         return 1
 
     try:
-        from mmi.tui import run_tui
-        run_tui()
-        return 0
+        from mmi.tui_v3 import run_tui
+        return run_tui()
     except KeyboardInterrupt:
         return 0
     finally:
