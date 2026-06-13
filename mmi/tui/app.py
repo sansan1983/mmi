@@ -56,8 +56,8 @@ class CTrimApp(App):
     def _apply_theme(self) -> None:
         """应用当前主题 CSS。"""
         css = DARK_CSS if self._theme == "dark" else LIGHT_CSS
-        self.stylesheet.source = css
-        self.stylesheet.reparse()
+        # Textual 8.x: 用 add_source 设置内联 CSS
+        self.stylesheet.add_source(css, read_from=("<inline>", ""), tie_breaker=0)
         self.refresh()
 
     def action_toggle_theme(self) -> None:
