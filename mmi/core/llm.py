@@ -777,28 +777,47 @@ class AnthropicLLMProvider(LLMProvider):
 
 
 def _build_provider_from_config() -> LLMProvider:
-    """按 ~/.mmi/config.toml [llm] 构造 provider(供 get_default_provider 优先用)。"""
+    """按 ~/.mmi/config.toml [llm] 构造 provider(供 get_default_provider 优先用)。
+
+    支持三种来源:
+      1. 预置 provider (deepseek, glm, qwen, minimax)
+      2. 自定义插件 provider (~/.mmi/providers/*.py)
+      3. custom provider (用户手填 base_url)
+    """
     from . import config as cfg_mod
     from . import providers as prov_mod
+    from .provider_registry import ProviderRegistry
+
     llm = cfg_mod.get_llm_config()
     provider_id = llm.get("provider", "").strip().lower()
     api_key = cfg_mod.resolve_api_key(provider_id)
     base_url = llm.get("base_url", "").strip() or None
     model = llm.get("model", "").strip() or "gpt-4o-mini"
-    # api_style 优先级:config 显式 > provider 首选
     api_style = llm.get("api_style", "").strip()
+
+    if not provider_id or not api_key:
+        return None  # 没配完整,回退到 env
+
+    # --- 尝试自定义插件 ---
+    registry = ProviderRegistry.get_instance()
+    registry.discover()  # 扫描 ~/.mmi/providers/
+    plugin_cls = registry.get_provider_class(provider_id)
+    if plugin_cls is not None:
+        try:
+            return plugin_cls(api_key=api_key, base_url=base_url, model=model)
+        except Exception:
+            pass  # 插件构造失败,继续走预置逻辑
+
+    # --- 预置 provider ---
     if not api_style:
         try:
             info = prov_mod.get_provider(provider_id)
             api_style = info.preferred_api_style
         except (ValueError, KeyError):
             api_style = "openai"
-    if not provider_id or not api_key:
-        return None  # 没配完整,回退到 env
     try:
         if api_style == "anthropic":
             return AnthropicLLMProvider(api_key=api_key, base_url=base_url, model=model)
-        # OpenAI 兼容(默认)
         return OpenAILLMProvider(api_key=api_key, base_url=base_url, model=model)
     except LLMError:
         return None
