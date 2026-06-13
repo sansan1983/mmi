@@ -30,6 +30,8 @@ __all__ = [
     "get_memory_db_path",
     "get_faiss_index_path",
     "get_faiss_ids_path",
+    "get_skills_dir",
+    "get_traces_dir",
     "ensure_dirs",
 ]
 
@@ -46,6 +48,8 @@ _CONFIG_FILENAME = "config.toml"
 _MEMORY_DB_FILENAME = "memory.db"
 _FAISS_INDEX_FILENAME = "faiss.index"
 _FAISS_IDS_FILENAME = "faiss_ids.json"
+_SKILLS_SUBDIR = "skills"
+_TRACES_SUBDIR = "traces"
 _ENV_HOME_OVERRIDE = "MMI_HOME"
 
 
@@ -126,6 +130,22 @@ def get_faiss_ids_path() -> Path:
     return get_root() / _FAISS_IDS_FILENAME
 
 
+def get_skills_dir() -> Path:
+    """返回 Skill 存储目录（默认 ~/.mmi/skills/）。
+
+    每个 Skill 以 JSON 文件存储：``<skill_id>.json``。
+    """
+    return get_root() / _SKILLS_SUBDIR
+
+
+def get_traces_dir() -> Path:
+    """返回 Trace 存储目录（默认 ~/.mmi/traces/）。
+
+    调用链元数据以 JSON Lines 存储于该目录下。
+    """
+    return get_root() / _TRACES_SUBDIR
+
+
 def ensure_dirs() -> Path:
     """确保数据根目录及标准子目录全部存在（idempotent）。
 
@@ -138,6 +158,6 @@ def ensure_dirs() -> Path:
         Path: 数据根目录路径（方便链式调用）。
     """
     root = get_root()
-    for d in (root, get_sessions_dir(), get_trash_dir()):
+    for d in (root, get_sessions_dir(), get_trash_dir(), get_skills_dir(), get_traces_dir()):
         d.mkdir(parents=True, exist_ok=True)
     return root
