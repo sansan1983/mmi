@@ -103,14 +103,12 @@ class ExactMatchEvaluator:
     case_sensitive: bool = False
 
     def evaluate(self, sample: EvalSample) -> EvalResult:
-        start = time.monotonic()
         expected = sample.expected_output or ""
         actual = sample.actual_output or ""
         if not self.case_sensitive:
             expected = expected.lower()
             actual = actual.lower()
         score = 1.0 if expected == actual else 0.0
-        latency = (time.monotonic() - start) * 1000
         return EvalResult(
             sample=sample,
             score=score,
@@ -260,10 +258,8 @@ class EvalRunner:
         ]
 
         def _eval(sample: EvalSample) -> tuple[float, bool, str]:
-            start = time.monotonic()
             try:
                 actual = fn(sample.input_text)
-                latency = (time.monotonic() - start) * 1000
                 match = actual.strip() == sample.expected_output.strip()
                 return (1.0 if match else 0.0, match,
                         f"actual={actual[:50]}" if not match else "match")

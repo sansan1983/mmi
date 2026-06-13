@@ -19,7 +19,7 @@ import re
 import threading
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from mmi.agent.event_bus import EventBus

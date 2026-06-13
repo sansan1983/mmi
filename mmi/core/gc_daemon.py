@@ -15,8 +15,7 @@ from __future__ import annotations
 import atexit
 import logging
 import threading
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 
 log = logging.getLogger(__name__)

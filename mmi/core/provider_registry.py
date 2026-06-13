@@ -124,7 +124,6 @@ class ProviderRegistry:
 
         with self._lock:
             for path in sorted(self._providers_dir.glob("*.py")):
-                name_hint = path.stem
                 try:
                     loaded = self._load_plugin(path)
                     if loaded and loaded.name not in self._providers:

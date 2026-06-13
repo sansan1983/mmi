@@ -10,7 +10,7 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import ClassVar
 
-from mmi.core.paths import ensure_dirs, get_skills_dir
+from mmi.core.paths import get_skills_dir
 
 
 class SkillType(Enum):
