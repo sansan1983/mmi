@@ -384,11 +384,7 @@ class ChatScreen(Screen[None]):
     def on_stream_done(self, event: StreamDone) -> None:
         self._streaming = False
         self._focus_input()
-        # P2-2: 将完整回复写回会话（持久化流式内容）
-        if self._assistant_accumulated:
-            reply = "".join(self._assistant_accumulated)
-            bridge: ManagerBridge = self.app.bridge  # type: ignore[attr-defined]
-            bridge.persist_turn(self._session_id, reply)
+        # stream_chat 已通过 storage.append_turn() 自动写入，无需重复持久化
         self._assistant_accumulated = []
 
 

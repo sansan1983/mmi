@@ -113,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
         i18n.init(args.lang)
 
     # 初始化 SessionManager
-    mgr = mgr_module.SessionManager.get_instance()
+    mgr = mgr_module.SessionManager()
 
     return _dispatch(args, mgr)
 
