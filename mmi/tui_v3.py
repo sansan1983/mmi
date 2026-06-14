@@ -4,6 +4,7 @@ Port of GA's tui_v3 architecture, adapted for mmi's SessionManager.
 Run: mmi tui-python  or  python -m mmi.tui_v3
 
 P2-2: 修复流式内容持久化、清理未使用变量、增加 /delete 和 /export 命令。
+Bugfix: 回车进入历史会话、自动滚动、斜杠命令补全。
 """
 
 from __future__ import annotations
@@ -51,11 +52,7 @@ class ManagerBridge:
         except Exception:
             return ""
 
-    # NOTE: 不再需要 persist_turn，因为 mgr.stream_chat() 在迭代完成后
-    # 已经通过 storage.append_turn() 自动写入了 turn。
-
     def delete_session(self, session_id: str) -> None:
-        """Delete a session."""
         try:
             self.mgr.delete(session_id)
         except Exception:
@@ -69,7 +66,7 @@ class ManagerBridge:
 
 
 # ---------------------------------------------------------------------------
-# Stream Messages (thread-safe messaging)
+# Stream Messages
 # ---------------------------------------------------------------------------
 
 
@@ -85,12 +82,24 @@ class StreamDone(Message):
         self.reply = reply
 
 
+# 命令列表常量
+_COMMANDS: dict[str, str] = {
+    "quit": "退出程序",
+    "back": "返回上一页",
+    "delete": "删除当前会话",
+    "export": "导出为 Markdown",
+    "model": "切换模型 (/model <名称>)",
+    "refresh": "刷新当前会话",
+    "help": "显示帮助",
+}
+
 # ---------------------------------------------------------------------------
 # Session List Screen
 # ---------------------------------------------------------------------------
 
 
 LIST_TITLE = _t('tui.list.title', default='会话列表')
+
 
 class SessionListScreen(Screen[None]):
     """Main screen showing session list."""
@@ -122,9 +131,12 @@ class SessionListScreen(Screen[None]):
 
     def on_mount(self) -> None:
         self._load()
+        # Bug #1 FIX: DOM 完全挂载后再聚焦，确保 ListView 能捕获 Enter
+        lv = self.query_one("#tui-session-list", ListView)
+        self.set_timer(0.05, lambda: lv.focus())
 
     def _load(self) -> None:
-        bridge: ManagerBridge = self.app.bridge  # type: ignore[attr-defined]
+        bridge: ManagerBridge = self.app.bridge
         try:
             self._items = bridge.list_sessions(limit=100)
             self._items.sort(key=lambda m: m.heat or 0.0, reverse=True)
@@ -140,29 +152,44 @@ class SessionListScreen(Screen[None]):
             title = (meta.title or "(untitled)").replace("\n", " ")
             info = f"{i+1:>3}  {title[:36]:36}  heat:{meta.heat:<5.1f}  [{meta.state}]"
             lv.mount(ListItem(Static(info)))
+        if self._items:
+            lv.index = 0  # Bug #1 FIX: 默认选中第一条
         self.query_one("#tui-list-info", Static).update(
             f"会话历史 · {len(self._items)} 个会话"
         )
+        # Bug #1 FIX: 自动聚焦 ListView 使 Enter 生效
+        lv.focus()
+
+    # Bug #1 FIX: 必须监听 ListView.Selected 事件，这是 ListView Enter 键的标准路径
+    def on_list_view_selected(self, event: ListView.Selected) -> None:
+        if event.item is None:
+            return
+        idx = event.list_view.index
+        if idx is not None and idx < len(self._items):
+            meta = self._items[idx]
+            self.app.push_screen(ChatScreen(meta.session_id, meta.title))
 
     def action_open_session(self) -> None:
         lv = self.query_one("#tui-session-list", ListView)
         if lv.index is None or not self._items or lv.index >= len(self._items):
             return
         meta = self._items[lv.index]
-        self.app.push_screen(ChatScreen(meta.session_id, meta.title))  # type: ignore[attr-defined]
+        self.app.push_screen(ChatScreen(meta.session_id, meta.title))
 
     def action_new_session(self) -> None:
         def on_dismiss(sid: str | None) -> None:
             if sid:
-                self.app.push_screen(ChatScreen(sid, "untitled"))  # type: ignore[attr-defined]
+                self.app.push_screen(ChatScreen(sid, "untitled"))
                 self._load()
-        self.app.push_screen(NewSessionScreen(), on_dismiss)  # type: ignore[attr-defined]
+
+        self.app.push_screen(NewSessionScreen(), on_dismiss)
 
     def action_search(self) -> None:
         def on_dismiss(sid: str | None) -> None:
             if sid:
-                self.app.push_screen(ChatScreen(sid, "..."))  # type: ignore[attr-defined]
-        self.app.push_screen(SearchScreen(), on_dismiss)  # type: ignore[attr-defined]
+                self.app.push_screen(ChatScreen(sid, "..."))
+
+        self.app.push_screen(SearchScreen(), on_dismiss)
 
     def action_quit(self) -> None:
         self.app.exit()
@@ -171,7 +198,8 @@ class SessionListScreen(Screen[None]):
         def on_dismiss(cmd: str | None) -> None:
             if cmd:
                 self._exec_cmd(cmd)
-        self.app.push_screen(CommandScreen(), on_dismiss)  # type: ignore[attr-defined]
+
+        self.app.push_screen(CommandScreen(), on_dismiss)
 
     def action_refresh(self) -> None:
         self._load()
@@ -209,22 +237,25 @@ class ChatScreen(Screen[None]):
         self._title = title
         self._streaming = False
         self._assistant_accumulated: list[str] = []
-        self._user_input: str = ""  # 保存用户输入，用于 persist
 
     def compose(self) -> ComposeResult:
         yield Static(
             f" {self._title} [{self._session_id[:8]}] ", id="tui-chat-titlebar"
         )
         yield RichLog(id="tui-chat-log", highlight=True, markup=True, wrap=True)
+        # Bug #3 FIX: 在输入框上方增加一个命令补全提示区域，默认隐藏
+        yield Static("", id="tui-completions", classes="completions-hidden")
         yield Input(placeholder="输入消息…  /cmd 执行命令", id="tui-chat-input")
         yield Static("  Esc 返回 · / 命令 · Ctrl+R 刷新  ", id="tui-chat-footer")
 
     def on_mount(self) -> None:
         self._load_history()
+        # Bug #2 FIX: 加载历史后自动滚动到底部
+        self.query_one("#tui-chat-log", RichLog).scroll_end(animate=False)
         self.query_one("#tui-chat-input", Input).focus()
 
     def _load_history(self) -> None:
-        bridge: ManagerBridge = self.app.bridge  # type: ignore[attr-defined]
+        bridge: ManagerBridge = self.app.bridge
         body = bridge.get_session_body(self._session_id)
         log = self.query_one("#tui-chat-log", RichLog)
         log.clear()
@@ -262,7 +293,8 @@ class ChatScreen(Screen[None]):
         def on_dismiss(cmd: str | None) -> None:
             if cmd:
                 self._handle_command(cmd)
-        self.app.push_screen(CommandScreen(), on_dismiss)  # type: ignore[attr-defined]
+
+        self.app.push_screen(CommandScreen(), on_dismiss)
 
     def action_refresh(self) -> None:
         self._load_history()
@@ -277,6 +309,32 @@ class ChatScreen(Screen[None]):
             return
         self._send_message(text)
 
+    #  Bug #3 FIX: 斜杠命令输入自动补全
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        text = event.value
+        comp = self.query_one("#tui-completions", Static)
+        if text.startswith("/"):
+            self._show_completions(text, comp)
+        else:
+            comp.update("")
+            comp.classes = "completions-hidden"
+
+    def _show_completions(self, text: str, comp: Static) -> None:
+        """Show filtered command completions in the dedicated widget above input."""
+        filter_text = text[1:].strip().lower()
+        lines: list[str] = []
+        for cmd, desc in _COMMANDS.items():
+            if filter_text and filter_text not in cmd and filter_text not in desc:
+                continue
+            lines.append(f"  /{cmd:<12} {desc}")
+        if lines:
+            comp.update("── 命令候选 ──\n" + "\n".join(lines))
+            comp.classes = "completions-visible"
+        else:
+            comp.update("")
+            comp.classes = "completions-hidden"
+
     def _handle_command(self, cmd: str) -> None:
         parts = cmd[1:].strip().split(maxsplit=1)
         cmd_name = parts[0].lower() if parts else ""
@@ -288,19 +346,19 @@ class ChatScreen(Screen[None]):
         elif cmd_name in ("back", "b"):
             self.app.pop_screen()
         elif cmd_name == "delete":
-            # P2-2: 删除当前会话
             try:
-                bridge: ManagerBridge = self.app.bridge  # type: ignore[attr-defined]
+                bridge: ManagerBridge = self.app.bridge
                 bridge.delete_session(self._session_id)
-                log.write(Text(f"✓ 会话已删除: {self._session_id[:8]}", style="bold yellow"))
+                log.write(
+                    Text(f"✓ 会话已删除: {self._session_id[:8]}", style="bold yellow")
+                )
                 self.app.pop_screen()
             except Exception as e:
                 log.write(Text(f"✗ 删除失败: {e}", style="red"))
             self._focus_input()
         elif cmd_name == "export":
-            # P2-2: 导出当前会话为 Markdown
             try:
-                bridge: ManagerBridge = self.app.bridge  # type: ignore[attr-defined]
+                bridge: ManagerBridge = self.app.bridge
                 body = bridge.get_session_body(self._session_id)
                 if not body:
                     log.write(Text("⚠ 当前会话为空，无法导出", style="yellow"))
@@ -308,7 +366,7 @@ class ChatScreen(Screen[None]):
                     export_path = os.path.join(
                         os.path.expanduser("~"),
                         "mmi_exports",
-                        f"{self._session_id[:8]}_{self._title or 'chat'}.md"
+                        f"{self._session_id[:8]}_{self._title or 'chat'}.md",
                     )
                     os.makedirs(os.path.dirname(export_path), exist_ok=True)
                     with open(export_path, "w", encoding="utf-8") as f:
@@ -321,7 +379,9 @@ class ChatScreen(Screen[None]):
             if cmd_arg:
                 try:
                     cfg_module.set_default_model(cmd_arg)
-                    log.write(Text(f"✓ 模型已切换至 {cmd_arg}", style="bold yellow"))
+                    log.write(
+                        Text(f"✓ 模型已切换至 {cmd_arg}", style="bold yellow")
+                    )
                 except Exception as e:
                     log.write(Text(f"✗ 切换失败: {e}", style="red"))
             else:
@@ -352,10 +412,12 @@ class ChatScreen(Screen[None]):
             return
         log = self.query_one("#tui-chat-log", RichLog)
         log.write(Text(f"\n👤 {text}", style="bold cyan"))
+        log.write(Text("\n🤖 思考中…", style="dim italic"))
+        # Bug #2 FIX: 用户输入后自动滚动到底部
+        log.scroll_end(animate=False)
         self._streaming = True
         self._assistant_accumulated = []
-        self._user_input = text  # 保存用户输入
-        bridge: ManagerBridge = self.app.bridge  # type: ignore[attr-defined]
+        bridge: ManagerBridge = self.app.bridge
         self._stream_assistant_response(bridge, text)
 
     @work(thread=True)
@@ -376,15 +438,17 @@ class ChatScreen(Screen[None]):
             self.post_message(StreamDone(err))
 
     def on_stream_chunk(self, event: StreamChunk) -> None:
-        # P2-2: 累积完整回复内容（用于持久化）
         self._assistant_accumulated.append(event.chunk)
         log = self.query_one("#tui-chat-log", RichLog)
+        # Bug #2 FIX: 流式输出时自动滚动到底部
         log.write(event.chunk, width=9999)
+        log.scroll_end(animate=False)
 
     def on_stream_done(self, event: StreamDone) -> None:
         self._streaming = False
+        # Bug #2 FIX: 流式完成后重新加载历史，自动格式化显示完整对话
+        self._load_history()
         self._focus_input()
-        # stream_chat 已通过 storage.append_turn() 自动写入，无需重复持久化
         self._assistant_accumulated = []
 
 
@@ -425,7 +489,7 @@ class NewSessionScreen(ModalScreen[str]):
         if not title:
             title = "untitled"
         try:
-            bridge: ManagerBridge = self.app.bridge  # type: ignore[attr-defined]
+            bridge: ManagerBridge = self.app.bridge
             sid = bridge.create_session(title)
             self.dismiss(sid)
         except Exception as e:
@@ -468,7 +532,7 @@ class SearchScreen(ModalScreen[str]):
         if len(query) < 1:
             return
         try:
-            bridge: ManagerBridge = self.app.bridge  # type: ignore[attr-defined]
+            bridge: ManagerBridge = self.app.bridge
             self._results = bridge.search(query)
             for r in self._results[:20]:
                 lv.mount(ListItem(Static(f"{r.title}  [{r.session_id[:8]}]")))
@@ -613,6 +677,23 @@ class MmiTui(App[None]):
         border: none;
         padding: 0 1;
         overflow-y: scroll;
+    }
+
+    /* Bug #3 FIX: 命令补全提示区域 */
+    #tui-completions {
+        height: auto;
+        max-height: 8;
+        background: #16161e;
+        color: #a9b1d6;
+        border: solid #2a2b3e;
+        padding: 0 1;
+        overflow-y: auto;
+    }
+    #tui-completions.completions-hidden {
+        display: none;
+    }
+    #tui-completions.completions-visible {
+        display: block;
     }
 
     #tui-chat-input {
