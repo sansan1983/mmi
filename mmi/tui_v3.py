@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 import re
 import sys
-from typing import TYPE_CHECKING, Iterator
+from typing import Iterator
 
 from rich.text import Text
 from textual import work
