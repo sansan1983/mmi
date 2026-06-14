@@ -2,10 +2,13 @@
 
 Port of GA's tui_v3 architecture, adapted for mmi's SessionManager.
 Run: mmi tui-python  or  python -m mmi.tui_v3
+
+P2-2: 修复流式内容持久化、清理未使用变量、增加 /delete 和 /export 命令。
 """
 
 from __future__ import annotations
 
+import os
 import re
 import sys
 from typing import TYPE_CHECKING, Iterator
@@ -48,6 +51,16 @@ class ManagerBridge:
         except Exception:
             return ""
 
+    # NOTE: 不再需要 persist_turn，因为 mgr.stream_chat() 在迭代完成后
+    # 已经通过 storage.append_turn() 自动写入了 turn。
+
+    def delete_session(self, session_id: str) -> None:
+        """Delete a session."""
+        try:
+            self.mgr.delete(session_id)
+        except Exception:
+            pass
+
     def stream_chat(self, session_id: str, user_input: str) -> Iterator[str]:
         yield from self.mgr.stream_chat(session_id, user_input)
 
@@ -77,7 +90,7 @@ class StreamDone(Message):
 # ---------------------------------------------------------------------------
 
 
-LIST_TITLE = _t('tui.list.title', default='\u4f1a\u8bdd\u5217\u8868')
+LIST_TITLE = _t('tui.list.title', default='会话列表')
 
 class SessionListScreen(Screen[None]):
     """Main screen showing session list."""
@@ -103,7 +116,7 @@ class SessionListScreen(Screen[None]):
         yield Static("", id="tui-list-info")
         yield ListView(id="tui-session-list")
         yield Static(
-            "  \u2191\u2193 \u9009\u62e9 \u00b7 Enter \u8fdb\u5165 \u00b7 n \u65b0\u5efa \u00b7 / \u547d\u4ee4 \u00b7 q \u9000\u51fa  ",
+            "  ↑↓ 选择 · Enter 进入 · n 新建 · / 命令 · q 退出  ",
             id="tui-footer",
         )
 
@@ -120,15 +133,15 @@ class SessionListScreen(Screen[None]):
         lv = self.query_one("#tui-session-list", ListView)
         lv.clear()
         if not self._items:
-            lv.mount(ListItem(Static("~ ~ ~ \u6682\u65e0\u4f1a\u8bdd ~ ~ ~", classes="empty-msg")))
-            self.query_one("#tui-list-info", Static).update("\u4f1a\u8bdd\u5386\u53f2 \u00b7 0 \u4e2a\u4f1a\u8bdd")
+            lv.mount(ListItem(Static("~ ~ ~ 暂无会话 ~ ~ ~", classes="empty-msg")))
+            self.query_one("#tui-list-info", Static).update("会话历史 · 0 个会话")
             return
         for i, meta in enumerate(self._items):
             title = (meta.title or "(untitled)").replace("\n", " ")
             info = f"{i+1:>3}  {title[:36]:36}  heat:{meta.heat:<5.1f}  [{meta.state}]"
             lv.mount(ListItem(Static(info)))
         self.query_one("#tui-list-info", Static).update(
-            f"\u4f1a\u8bdd\u5386\u53f2 \u00b7 {len(self._items)} \u4e2a\u4f1a\u8bdd"
+            f"会话历史 · {len(self._items)} 个会话"
         )
 
     def action_open_session(self) -> None:
@@ -196,15 +209,15 @@ class ChatScreen(Screen[None]):
         self._title = title
         self._streaming = False
         self._assistant_accumulated: list[str] = []
-        self._stream_buf = ""
+        self._user_input: str = ""  # 保存用户输入，用于 persist
 
     def compose(self) -> ComposeResult:
         yield Static(
             f" {self._title} [{self._session_id[:8]}] ", id="tui-chat-titlebar"
         )
         yield RichLog(id="tui-chat-log", highlight=True, markup=True, wrap=True)
-        yield Input(placeholder="\u8f93\u5165\u6d88\u606f\u2026  /cmd \u6267\u884c\u547d\u4ee4", id="tui-chat-input")
-        yield Static("  Esc \u8fd4\u56de \u00b7 / \u547d\u4ee4 \u00b7 Ctrl+R \u5237\u65b0  ", id="tui-chat-footer")
+        yield Input(placeholder="输入消息…  /cmd 执行命令", id="tui-chat-input")
+        yield Static("  Esc 返回 · / 命令 · Ctrl+R 刷新  ", id="tui-chat-footer")
 
     def on_mount(self) -> None:
         self._load_history()
@@ -216,7 +229,7 @@ class ChatScreen(Screen[None]):
         log = self.query_one("#tui-chat-log", RichLog)
         log.clear()
         if not body:
-            log.write(Text("\uff08\u65b0\u4f1a\u8bdd\uff09", style="dim italic"))
+            log.write(Text("（新会话）", style="dim italic"))
             return
         lines = body.split("\n")
         for line in lines:
@@ -226,14 +239,14 @@ class ChatScreen(Screen[None]):
             if stripped.startswith("**User:**"):
                 log.write(
                     Text(
-                        f"\U0001f9d1 {stripped.replace('**User:**', '').strip()}",
+                        f"👤 {stripped.replace('**User:**', '').strip()}",
                         style="bold cyan",
                     )
                 )
             elif stripped.startswith("**Assistant:**"):
                 log.write(
                     Text(
-                        f"\U0001f916 {stripped.replace('**Assistant:**', '').strip()}",
+                        f"🤖 {stripped.replace('**Assistant:**', '').strip()}",
                         style="green",
                     )
                 )
@@ -274,27 +287,58 @@ class ChatScreen(Screen[None]):
             self.app.exit()
         elif cmd_name in ("back", "b"):
             self.app.pop_screen()
+        elif cmd_name == "delete":
+            # P2-2: 删除当前会话
+            try:
+                bridge: ManagerBridge = self.app.bridge  # type: ignore[attr-defined]
+                bridge.delete_session(self._session_id)
+                log.write(Text(f"✓ 会话已删除: {self._session_id[:8]}", style="bold yellow"))
+                self.app.pop_screen()
+            except Exception as e:
+                log.write(Text(f"✗ 删除失败: {e}", style="red"))
+            self._focus_input()
+        elif cmd_name == "export":
+            # P2-2: 导出当前会话为 Markdown
+            try:
+                bridge: ManagerBridge = self.app.bridge  # type: ignore[attr-defined]
+                body = bridge.get_session_body(self._session_id)
+                if not body:
+                    log.write(Text("⚠ 当前会话为空，无法导出", style="yellow"))
+                else:
+                    export_path = os.path.join(
+                        os.path.expanduser("~"),
+                        "mmi_exports",
+                        f"{self._session_id[:8]}_{self._title or 'chat'}.md"
+                    )
+                    os.makedirs(os.path.dirname(export_path), exist_ok=True)
+                    with open(export_path, "w", encoding="utf-8") as f:
+                        f.write(body)
+                    log.write(Text(f"✓ 已导出: {export_path}", style="bold green"))
+            except Exception as e:
+                log.write(Text(f"✗ 导出失败: {e}", style="red"))
+            self._focus_input()
         elif cmd_name == "model":
             if cmd_arg:
                 try:
                     cfg_module.set_default_model(cmd_arg)
-                    log.write(Text(f"\u2713 \u6a21\u578b\u5df2\u5207\u6362\u81f3 {cmd_arg}", style="bold yellow"))
+                    log.write(Text(f"✓ 模型已切换至 {cmd_arg}", style="bold yellow"))
                 except Exception as e:
-                    log.write(Text(f"\u2717 \u5207\u6362\u5931\u8d25: {e}", style="red"))
+                    log.write(Text(f"✗ 切换失败: {e}", style="red"))
             else:
                 cur = cfg_module.get_default_model()
-                log.write(Text(f"\u5f53\u524d\u6a21\u578b: {cur}", style="bold yellow"))
+                log.write(Text(f"当前模型: {cur}", style="bold yellow"))
         elif cmd_name in ("refresh", "r"):
             self._load_history()
         elif cmd_name in ("help", "h"):
             log.write(
                 Text(
-                    "\u547d\u4ee4: /model [\u540d\u79f0]  /back  /quit  /refresh  /help",
+                    "命令: /model [名称]  /delete  /export  /back  /quit  /refresh  /help",
                     style="bold yellow",
                 )
             )
         else:
-            log.write(Text(f"\u672a\u77e5\u547d\u4ee4: /{cmd_name}", style="red"))
+            log.write(Text(f"未知命令: /{cmd_name}", style="red"))
+            log.write(Text("输入 /help 查看可用命令", style="dim"))
         self._focus_input()
 
     def _focus_input(self) -> None:
@@ -303,13 +347,14 @@ class ChatScreen(Screen[None]):
     def _send_message(self, text: str) -> None:
         if self._streaming:
             self.query_one("#tui-chat-log", RichLog).write(
-                Text("\u26a0 \u7b49\u5f85\u5f53\u524d\u56de\u590d\u5b8c\u6210\u2026", style="red")
+                Text("⚠ 等待当前回复完成…", style="red")
             )
             return
         log = self.query_one("#tui-chat-log", RichLog)
-        log.write(Text(f"\n\U0001f9d1 {text}", style="bold cyan"))
+        log.write(Text(f"\n👤 {text}", style="bold cyan"))
         self._streaming = True
         self._assistant_accumulated = []
+        self._user_input = text  # 保存用户输入
         bridge: ManagerBridge = self.app.bridge  # type: ignore[attr-defined]
         self._stream_assistant_response(bridge, text)
 
@@ -326,18 +371,25 @@ class ChatScreen(Screen[None]):
             reply = "".join(chunks)
             self.post_message(StreamDone(reply))
         except Exception as e:
-            err = f"[LLM \u9519\u8bef: {e}]"
+            err = f"[LLM 错误: {e}]"
             self.post_message(StreamChunk(err))
             self.post_message(StreamDone(err))
 
     def on_stream_chunk(self, event: StreamChunk) -> None:
-        self._stream_buf += event.chunk
+        # P2-2: 累积完整回复内容（用于持久化）
+        self._assistant_accumulated.append(event.chunk)
         log = self.query_one("#tui-chat-log", RichLog)
         log.write(event.chunk, width=9999)
 
     def on_stream_done(self, event: StreamDone) -> None:
         self._streaming = False
         self._focus_input()
+        # P2-2: 将完整回复写回会话（持久化流式内容）
+        if self._assistant_accumulated:
+            reply = "".join(self._assistant_accumulated)
+            bridge: ManagerBridge = self.app.bridge  # type: ignore[attr-defined]
+            bridge.persist_turn(self._session_id, reply)
+        self._assistant_accumulated = []
 
 
 # ---------------------------------------------------------------------------
@@ -350,11 +402,11 @@ class NewSessionScreen(ModalScreen[str]):
 
     def compose(self) -> ComposeResult:
         yield Container(
-            Label("\u65b0\u5efa\u4f1a\u8bdd", id="new-session-title"),
-            Input(placeholder="\u4f1a\u8bdd\u6807\u9898\uff08\u53ef\u9009\uff09", id="new-session-input"),
+            Label("新建会话", id="new-session-title"),
+            Input(placeholder="会话标题（可选）", id="new-session-input"),
             Container(
-                Button("\u521b\u5efa", id="btn-create", variant="primary"),
-                Button("\u53d6\u6d88", id="btn-cancel"),
+                Button("创建", id="btn-create", variant="primary"),
+                Button("取消", id="btn-cancel"),
                 id="new-session-buttons",
             ),
             id="new-session-dialog",
@@ -382,7 +434,7 @@ class NewSessionScreen(ModalScreen[str]):
             self.dismiss(sid)
         except Exception as e:
             inp = self.query_one("#new-session-input", Input)
-            inp.value = f"\u2717 {e}"
+            inp.value = f"✗ {e}"
             inp.focus()
 
     def action_cancel(self) -> None:
@@ -403,8 +455,8 @@ class SearchScreen(ModalScreen[str]):
 
     def compose(self) -> ComposeResult:
         yield Container(
-            Label("\u641c\u7d22\u4f1a\u8bdd", id="search-title"),
-            Input(placeholder="\u8f93\u5165\u5173\u952e\u8bcd\u2026", id="search-input"),
+            Label("搜索会话", id="search-title"),
+            Input(placeholder="输入关键词…", id="search-input"),
             ListView(id="search-results"),
             id="search-dialog",
         )
@@ -447,18 +499,20 @@ class CommandScreen(ModalScreen[str]):
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
 
     COMMANDS = {
-        "quit": "\u9000\u51fa\u7a0b\u5e8f",
-        "back": "\u8fd4\u56de\u4e0a\u4e00\u9875",
-        "new": "\u65b0\u5efa\u4f1a\u8bdd",
-        "refresh": "\u5237\u65b0\u5217\u8868",
-        "model": "\u5207\u6362\u6a21\u578b (/model <\u540d\u79f0>)",
-        "help": "\u5e2e\u52a9\u4fe1\u606f",
+        "quit": "退出程序",
+        "back": "返回上一页",
+        "new": "新建会话",
+        "refresh": "刷新列表",
+        "model": "切换模型 (/model <名称>)",
+        "delete": "删除当前会话",
+        "export": "导出为 Markdown",
+        "help": "帮助信息",
     }
 
     def compose(self) -> ComposeResult:
         yield Container(
-            Label("\u547d\u4ee4\u9762\u677f", id="cmd-title"),
-            Input(placeholder="/<\u547d\u4ee4>", id="cmd-input"),
+            Label("命令面板", id="cmd-title"),
+            Input(placeholder="/<命令>", id="cmd-input"),
             ListView(id="cmd-results"),
             id="cmd-dialog",
         )

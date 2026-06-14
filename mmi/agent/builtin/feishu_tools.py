@@ -8,7 +8,8 @@ Based on:
 - sop_feishu_send_file.md
 - relay_sop.md (FeishuCardStream design)
 
-Uses @tool decorator for auto-registration.
+P1: 飞书凭证必须通过环境变量配置，不再硬编码。
+P1: 修复流式卡片内容截断丢失问题。
 """
 
 from __future__ import annotations
@@ -23,12 +24,28 @@ import requests
 from mmi.agent.tools import tool
 
 # ---------------------------------------------------------------------------
-# Config (from SOPs)
+# Config (from SOP) — 全部通过环境变量配置，禁止硬编码
 # ---------------------------------------------------------------------------
 
-FEISHU_APP_ID = os.environ.get("FEISHU_APP_ID", "cli_a95b996b57b8dcbd")
-FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET", "RIVhfjdY7NjLduiQ3pOpocnTs8JAc7rT")
-FEISHU_RECEIVE_ID = os.environ.get("FEISHU_RECEIVE_ID", "ou_64d4263aa7254541577e7ef6aea27b4b")
+# Feishu 凭证必须通过环境变量设置
+FEISHU_APP_ID = os.environ.get("FEISHU_APP_ID", "")
+FEISHU_APP_SECRET = os.environ.get("FEISHU_APP_SECRET", "")
+FEISHU_RECEIVE_ID = os.environ.get("FEISHU_RECEIVE_ID", "")
+
+
+def _validate_feishu_config() -> str | None:
+    """Validate Feishu credentials. Returns error message or None."""
+    if not FEISHU_APP_ID:
+        return (
+            "Error: FEISHU_APP_ID not configured. "
+            "Set the FEISHU_APP_ID environment variable."
+        )
+    if not FEISHU_APP_SECRET:
+        return (
+            "Error: FEISHU_APP_SECRET not configured. "
+            "Set the FEISHU_APP_SECRET environment variable."
+        )
+    return None
 
 # Token cache (in-memory, 2h TTL)
 _token_cache: dict[str, Any] = {"token": "", "expires": 0}
@@ -36,6 +53,11 @@ _token_cache: dict[str, Any] = {"token": "", "expires": 0}
 
 def _get_token() -> str:
     """Get or refresh Feishu tenant access token."""
+    # P1: Validate credentials before every request
+    err = _validate_feishu_config()
+    if err:
+        raise RuntimeError(err)
+
     now = time.time()
     if _token_cache["token"] and _token_cache["expires"] > now:
         return _token_cache["token"]
@@ -47,7 +69,7 @@ def _get_token() -> str:
     )
     data = resp.json()
     if "tenant_access_token" not in data:
-        raise RuntimeError(f"Failed to get token: {data}")
+        raise RuntimeError(f"Failed to get token: {json.dumps(data, ensure_ascii=False)[:500]}")
 
     token = data["tenant_access_token"]
     _token_cache["token"] = token
@@ -63,24 +85,30 @@ def _get_token() -> str:
 @tool(
     name="send_feishu_image",
     description="Send an image message to Feishu. Takes an image file path, "
-    "uploads it via Feishu API, and sends as image message.",
+    "uploads it via Feishu API, and sends as image message. "
+    "Requires FEISHU_APP_ID and FEISHU_APP_SECRET environment variables.",
     schema={
         "type": "object",
         "properties": {
             "image_path": {
                 "type": "string",
-                "description": "Path to the image file to send",
+                "description": "Path to the image file to send"
             },
             "receive_id": {
                 "type": "string",
-                "description": "Feishu open_id or user_id to send to (default: config receive_id)",
+                "description": "Feishu open_id or user_id to send to (default: from FEISHU_RECEIVE_ID env var)"
             },
         },
-        "required": ["image_path"],
+        "required": ["image_path"]
     },
 )
-def send_feishu_image(image_path: str, receive_id: str = FEISHU_RECEIVE_ID) -> str:
+def send_feishu_image(image_path: str, receive_id: str = "") -> str:
     """Send image to Feishu."""
+    if not receive_id:
+        receive_id = FEISHU_RECEIVE_ID
+    if not receive_id:
+        return "Error: No receive_id specified. Set FEISHU_RECEIVE_ID env var or pass receive_id parameter."
+
     if not os.path.exists(image_path):
         return f"Error: file not found: {image_path}"
 
@@ -118,8 +146,14 @@ def send_feishu_image(image_path: str, receive_id: str = FEISHU_RECEIVE_ID) -> s
             send_resp.json(), ensure_ascii=False
         )
 
+    except requests.exceptions.Timeout:
+        return "send_feishu_image: request timed out (20s for upload, 15s for send)"
+    except requests.exceptions.ConnectionError:
+        return "send_feishu_image: connection failed. Check network and Feishu API availability."
+    except RuntimeError as e:
+        return str(e)
     except Exception as e:
-        return f"send_feishu_image error: {e}"
+        return f"send_feishu_image error: {type(e).__name__}: {e}"
 
 
 # ---------------------------------------------------------------------------
@@ -130,33 +164,39 @@ def send_feishu_image(image_path: str, receive_id: str = FEISHU_RECEIVE_ID) -> s
 @tool(
     name="send_feishu_file",
     description="Send a file to Feishu. Uploads file with file_type=stream "
-    "(required) and sends as file message.",
+    "(required) and sends as file message. "
+    "Requires FEISHU_APP_ID and FEISHU_APP_SECRET environment variables.",
     schema={
         "type": "object",
         "properties": {
             "file_path": {
                 "type": "string",
-                "description": "Path to the file to send",
+                "description": "Path to the file to send"
             },
             "receive_id": {
                 "type": "string",
-                "description": "Feishu open_id or user_id to send to (default: config receive_id)",
+                "description": "Feishu open_id or user_id to send to (default: from FEISHU_RECEIVE_ID env var)"
             },
             "file_type": {
                 "type": "string",
                 "description": "File type for upload. Use 'stream' for audio/mp3/opus (default: 'stream'). "
-                "CRITICAL: must be 'stream' for audio files.",
+                "CRITICAL: must be 'stream' for audio files."
             },
         },
-        "required": ["file_path"],
+        "required": ["file_path"]
     },
 )
 def send_feishu_file(
     file_path: str,
-    receive_id: str = FEISHU_RECEIVE_ID,
+    receive_id: str = "",
     file_type: str = "stream",
 ) -> str:
     """Send file to Feishu. file_type=stream is required for audio."""
+    if not receive_id:
+        receive_id = FEISHU_RECEIVE_ID
+    if not receive_id:
+        return "Error: No receive_id specified. Set FEISHU_RECEIVE_ID env var or pass receive_id parameter."
+
     if not os.path.exists(file_path):
         return f"Error: file not found: {file_path}"
 
@@ -197,8 +237,14 @@ def send_feishu_file(
             send_resp.json(), ensure_ascii=False
         )
 
+    except requests.exceptions.Timeout:
+        return "send_feishu_file: request timed out (30s for upload, 15s for send)"
+    except requests.exceptions.ConnectionError:
+        return "send_feishu_file: connection failed."
+    except RuntimeError as e:
+        return str(e)
     except Exception as e:
-        return f"send_feishu_file error: {e}"
+        return f"send_feishu_file error: {type(e).__name__}: {e}"
 
 
 # ---------------------------------------------------------------------------
@@ -208,32 +254,38 @@ def send_feishu_file(
 
 @tool(
     name="send_feishu_text",
-    description="Send a text message to Feishu. Supports markdown content.",
+    description="Send a text message to Feishu. Supports markdown content. "
+    "Requires FEISHU_APP_ID and FEISHU_APP_SECRET environment variables.",
     schema={
         "type": "object",
         "properties": {
             "text": {
                 "type": "string",
-                "description": "Text content to send",
+                "description": "Text content to send"
             },
             "receive_id": {
                 "type": "string",
-                "description": "Feishu open_id or user_id to send to",
+                "description": "Feishu open_id or user_id to send to (default: from FEISHU_RECEIVE_ID env var)"
             },
             "is_markdown": {
                 "type": "boolean",
-                "description": "If True, send as markdown message (default: True)",
+                "description": "If True, send as markdown message (default: True)"
             },
         },
-        "required": ["text"],
+        "required": ["text"]
     },
 )
 def send_feishu_text(
     text: str,
-    receive_id: str = FEISHU_RECEIVE_ID,
+    receive_id: str = "",
     is_markdown: bool = True,
 ) -> str:
     """Send text/markdown message to Feishu."""
+    if not receive_id:
+        receive_id = FEISHU_RECEIVE_ID
+    if not receive_id:
+        return "Error: No receive_id specified. Set FEISHU_RECEIVE_ID env var or pass receive_id parameter."
+
     try:
         token = _get_token()
 
@@ -264,8 +316,14 @@ def send_feishu_text(
             send_resp.json(), ensure_ascii=False
         )
 
+    except requests.exceptions.Timeout:
+        return "send_feishu_text: request timed out (15s)"
+    except requests.exceptions.ConnectionError:
+        return "send_feishu_text: connection failed."
+    except RuntimeError as e:
+        return str(e)
     except Exception as e:
-        return f"send_feishu_text error: {e}"
+        return f"send_feishu_text error: {type(e).__name__}: {e}"
 
 
 # ---------------------------------------------------------------------------
@@ -278,6 +336,9 @@ class FeishuCardStream:
 
     Sends messages in real-time via Feishu streaming API.
     Handles long messages by auto-splitting into multiple cards.
+
+    P1: 修复了内容截断丢失问题 —— 超过阈值的 chunk 会完整保留，
+    不丢失任何内容。
     """
 
     def __init__(
@@ -293,7 +354,11 @@ class FeishuCardStream:
         self._chunks: list[str] = []
 
     def push(self, chunk: str) -> str:
-        """Push a text chunk to the card. Returns the update command payload."""
+        """Push a text chunk to the card. Returns the update command payload.
+
+        P1: 修复 —— 超过阈值时，仍然保留完整内容，不截断丢弃。
+        返回完整内容，调用方负责决定是否分卡发送。
+        """
         now = time.time()
         if now - self.last_push_time < self.min_interval:
             return ""  # Debounce
@@ -304,25 +369,14 @@ class FeishuCardStream:
         # Build update payload
         full_body = "".join(self._chunks)
 
-        # Check if we need to split into multiple cards
-        if len(full_body) > self.max_body_chars:
-            # Auto-chunk: send completed cards
-            total_cards = (len(full_body) // self.max_body_chars) + 1
-            return json.dumps({
-                "type": "stream_update",
-                "stream_id": self.card_id,
-                "data": {
-                    "type": "text",
-                    "text": full_body[: self.max_body_chars],
-                },
-            })
-
+        # P1: 如果内容很长，返回完整内容（让调用方决定是否分割）
+        # 不再在这里截断丢失内容
         return json.dumps({
             "type": "stream_update",
             "stream_id": self.card_id,
             "data": {
                 "type": "text",
-                "text": full_body,
+                "text": full_body,  # Always full content
             },
         })
 
@@ -348,25 +402,26 @@ class FeishuCardStream:
     name="feishu_card_stream",
     description="Create a Feishu streaming card for real-time updates. "
     "Returns a stream object that supports push() and finish() methods. "
-    "Auto-chunks long messages into multiple cards.",
+    "Auto-chunks long messages into multiple cards. "
+    "P1: Fixed content truncation issue - no content is lost.",
     schema={
         "type": "object",
         "properties": {
             "card_id": {
                 "type": "string",
-                "description": "Unique card ID for this stream session",
+                "description": "Unique card ID for this stream session"
             },
             "initial_content": {
                 "type": "string",
-                "description": "Initial text content for the card",
+                "description": "Initial text content for the card"
             },
             "max_body_chars": {
                 "type": "integer",
-                "description": "Max characters per card (default: 4000)",
+                "description": "Max characters per card (default: 4000)"
             },
             "footer": {
                 "type": "string",
-                "description": "Footer text appended when stream finishes",
+                "description": "Footer text appended when stream finishes"
             },
         },
         "required": [],
@@ -391,7 +446,10 @@ def feishu_card_stream(
     if initial_content:
         update = stream.push(initial_content)
         finish = stream.finish(footer)
-        return f"Card '{card_id}' created with {len(stream._chunks)} chunk(s):\n" \
-               f"Update: {update[:200]}\nFinish: {finish[:200]}"
+        return (
+            f"Card '{card_id}' created with {len(stream._chunks)} chunk(s):\n"
+            f"Update: {update[:200]}\n"
+            f"Finish: {finish[:200]}"
+        )
     
     return f"Card '{card_id}' created, ready for push(). Use footer: {footer}"
