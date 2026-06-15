@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-from pathlib import Path
 
 from mmi.agent.tools import tool
 
@@ -371,9 +370,11 @@ def web_server_start(port: int = 8080, serve_dir: str = ".") -> str:
     try:
         serve_path = os.path.abspath(serve_dir)
         pid_file = f"/tmp/mmi_web_server_{port}.pid"
-        cmd = f"cd {serve_path} && python3 -m http.server {port} --bind 0.0.0.0"
         proc = subprocess.Popen(
-            cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            ["python3", "-m", "http.server", str(port), "--bind", "0.0.0.0"],
+            cwd=serve_path,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
         )
         with open(pid_file, "w") as f:
             f.write(str(proc.pid))

@@ -25,7 +25,7 @@ def cmd_tui(args, mgr) -> int:
     try:
         lock.acquire()
     except portalocker.LockException:
-        print(f"[tui] 已有另一个 TUI 在运行（lock: {lock_path}）。", file=sys.stderr)
+        print(f"[tui] 已有另一个 TUI 在运行（lock: {lock_path}）。", file=__import__('sys').stderr)
         return 1
 
     try:

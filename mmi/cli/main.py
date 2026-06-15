@@ -12,10 +12,8 @@
 
 from __future__ import annotations
 
-import sys
 
 from mmi import __product_name__, __version__
-from mmi.cli import DEFAULT_LIMIT, ensure_mmi_home
 from mmi.cli.parser import build_parser
 from mmi.core import i18n
 from mmi.core import manager as mgr_module

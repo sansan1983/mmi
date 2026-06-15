@@ -93,7 +93,7 @@ def search_enhanced(
 
     # ===== Local BM25 search =====
     try:
-        from mmi.core.search import search_top_k, tokenize, score_turns, _detect_language
+        from mmi.core.search import score_turns, _detect_language
 
         if language is None:
             language = _detect_language(query)

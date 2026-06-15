@@ -9,7 +9,6 @@ import os
 import sys
 
 from mmi.cli import ensure_mmi_home
-from mmi.core import i18n  # noqa: E402
 
 
 def cmd_doctor(args, mgr) -> int:

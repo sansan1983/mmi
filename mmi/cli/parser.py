@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 
-from mmi import __product_name__, __version__
+from mmi import __product_name__
 from mmi.core import i18n
 
 DEFAULT_LIMIT = 10

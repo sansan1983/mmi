@@ -191,7 +191,7 @@ def provider_health() -> str:
         if not states:
             return "No providers tracked."
         lines = [f"  {name}: {state.value}" for name, state in states.items()]
-        return f"Provider Health:\n" + "\n".join(lines)
+        return "Provider Health:\n" + "\n".join(lines)
     except Exception as e:
         return f"provider_health error: {e}"
 

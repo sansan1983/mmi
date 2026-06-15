@@ -133,7 +133,7 @@ def send_feishu_image(image_path: str, receive_id: str = "") -> str:
 
         # Send message
         send_resp = requests.post(
-            f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id",
+            "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id",
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             json={
                 "receive_id": receive_id,
@@ -224,7 +224,7 @@ def send_feishu_file(
 
         # Send message
         send_resp = requests.post(
-            f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id",
+            "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id",
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             json={
                 "receive_id": receive_id,
@@ -303,7 +303,7 @@ def send_feishu_text(
             })
 
         send_resp = requests.post(
-            f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id",
+            "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id",
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
             json={
                 "receive_id": receive_id,
