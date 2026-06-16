@@ -23,7 +23,7 @@ dependencies = [
 [project.optional-dependencies]
 fuzzy = ["rapidfuzz>=3.0"]
 test = ["pytest>=8.0"]
-dev = ["ruff>=0.9", "pytest>=8.0"]
+dev = ["ruff>=0.9", "pytest>=8.0", "tiktoken>=0.5"]
 memory = [
     "faiss-cpu>=1.7",
     "numpy>=1.24",
