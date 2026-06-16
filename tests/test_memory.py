@@ -148,10 +148,12 @@ def test_search_empty_index_returns_empty(isolated_home, fast_embedder):
 
 
 def test_search_does_not_cross_corrupt(isolated_home, fast_embedder):
-    memory.store_memory("s1", "## A\ncontent A", embedder=fast_embedder)
-    hits = memory.search_semantic("B", top_k=10, embedder=fast_embedder)
-    # 至少能取到 1 条（FAISS 不空 → 召回）
-    assert len(hits) >= 1
+    """存两条记忆搜空字符串 → 不应崩溃，返回空列表。"""
+    memory.store_memory("s1", "## A\ncontent apple", embedder=fast_embedder)
+    memory.store_memory("s2", "## B\ncontent banana", embedder=fast_embedder)
+    hits = memory.search_semantic("", top_k=10, embedder=fast_embedder)
+    assert isinstance(hits, list), "search_semantic 应返回 list"
+    assert len(hits) == 0, "空查询字符串不应返回任何记忆"
 
 
 # ---------------------------------------------------------------------------
