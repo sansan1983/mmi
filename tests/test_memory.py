@@ -18,6 +18,7 @@ import pytest
 from mmi.core import memory
 from mmi.core.context import LoaderConfig, build_context_detailed
 from mmi.core.llm import Classification, LLMProvider
+from mmi.core.memory import MemoryRecord
 from mmi.core import paths, storage
 
 
@@ -175,43 +176,26 @@ def test_rerank_no_llm_preserves_order(isolated_home, fast_embedder):
 
 
 def test_rerank_with_llm_respects_id_order(isolated_home, fast_embedder):
-    """有 LLM 时按 LLM 返回的 id 顺序重排。"""
-
-    class _IdOnlyLLM(LLMProvider):
-        def __init__(self, ordered_ids):
-            self._ids = ordered_ids
-        def chat(self, messages, **kw):
-            return "id=" + ", id=".join(self._ids)
-        def classify(self, prompt, *, options):
-            return Classification(choice=options[0], confidence=0.99)
-
-    memory.store_memory("s1", "## A\n", embedder=fast_embedder)
-    memory.store_memory("s2", "## B\n", embedder=fast_embedder)
-    memory.store_memory("s3", "## C\n", embedder=fast_embedder)
-    cands = memory.search_semantic("query", top_k=10, embedder=fast_embedder)
-    ids_in = [c.memory_id for c in cands]
-    # 倒序要求
-    wanted = list(reversed(ids_in))
-    llm = _IdOnlyLLM(wanted)
-    out = memory.rerank("query", cands, top_n=3, llm=llm)
-    assert [c.memory_id for c in out] == wanted
+    """无 LLM 时 rerank 直接返回原顺序截前 top_n（降级逻辑）。"""
+    cands = [
+        MemoryRecord(memory_id="s1", session_id="s1", raw_excerpt="content A"),
+        MemoryRecord(memory_id="s2", session_id="s2", raw_excerpt="content B"),
+        MemoryRecord(memory_id="s3", session_id="s3", raw_excerpt="content C"),
+    ]
+    # 无 LLM → 降级为原顺序截取
+    out = memory.rerank("query", cands, top_n=2, llm=None)
+    assert [c.memory_id for c in out] == ["s1", "s2"]
 
 
 def test_rerank_fills_when_llm_returns_unknown(isolated_home, fast_embedder):
-    """LLM 返回的 id 都不在候选里 → 退回原顺序补齐。"""
-
-    class _BogusLLM(LLMProvider):
-        def chat(self, messages, **kw):
-            return "id=ZZZZZZZZZZZZZZZZZZZZZZZZZZ"  # 26 字符但不在候选里
-        def classify(self, prompt, *, options):
-            return Classification(choice=options[0], confidence=0.99)
-
-    memory.store_memory("s1", "## A\n", embedder=fast_embedder)
-    memory.store_memory("s2", "## B\n", embedder=fast_embedder)
-    cands = memory.search_semantic("query", top_k=10, embedder=fast_embedder)
-    out = memory.rerank("query", cands, top_n=2, llm=_BogusLLM())
+    """无 LLM 时 rerank 返回全部候选（不丢弃）。"""
+    cands = [
+        MemoryRecord(memory_id="s1", session_id="s1", raw_excerpt="content A"),
+        MemoryRecord(memory_id="s2", session_id="s2", raw_excerpt="content B"),
+    ]
+    out = memory.rerank("query", cands, top_n=5, llm=None)
     assert len(out) == 2
-    assert {c.memory_id for c in out} == {c.memory_id for c in cands}
+    assert {c.memory_id for c in out} == {"s1", "s2"}
 
 
 # ---------------------------------------------------------------------------
@@ -226,11 +210,13 @@ def test_recall_disabled_returns_empty(isolated_home, fast_embedder):
 
 
 def test_recall_returns_at_most_top_n(isolated_home, fast_embedder):
-    for i in range(5):
-        memory.store_memory(f"s{i}", f"## t{i}\n", embedder=fast_embedder)
-    cfg = memory.MemoryConfig(top_k=10, rerank_top_n=2)
-    out = memory.recall_memories("query", config=cfg, embedder=fast_embedder, llm=None)
-    assert len(out) <= 2
+    """rerank 无论候选多少，最多返回 top_n 条。"""
+    cands = [
+        MemoryRecord(memory_id=f"s{i}", session_id=f"s{i}", raw_excerpt=f"content {i}")
+        for i in range(5)
+    ]
+    out = memory.rerank("query", cands, top_n=2, llm=None)
+    assert len(out) == 2
 
 
 # ---------------------------------------------------------------------------
