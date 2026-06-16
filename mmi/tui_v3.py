@@ -34,6 +34,24 @@ from mmi.core.session import SessionMeta
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Token counting utility
+# ---------------------------------------------------------------------------
+
+try:
+    import tiktoken
+    _TIKTOKEN_ENC = tiktoken.get_encoding("cl100k_base")
+except ImportError:
+    _TIKTOKEN_ENC = None
+
+
+def count_tokens(text: str) -> int:
+    """Count tokens using tiktoken (fallback to char count)."""
+    if text and _TIKTOKEN_ENC:
+        return len(_TIKTOKEN_ENC.encode(text))
+    return len(text) if text else 0
+
+
+# ---------------------------------------------------------------------------
 # ManagerBridge
 # ---------------------------------------------------------------------------
 
@@ -242,7 +260,7 @@ class ChatScreen(Screen[None]):
         # Bug #3 FIX: 在输入框上方增加一个命令补全提示区域，默认隐藏
         yield Static("", id="tui-completions", classes="completions-hidden")
         yield Input(placeholder="输入消息…  /cmd 执行命令", id="tui-chat-input")
-        yield Static("  Esc 返回 · / 命令 · Ctrl+R 刷新  ", id="tui-chat-footer")
+        yield Static("  Esc 返回 · / 命令 · Ctrl+R 刷新  |  Tokens: 0 | Chars: 0  ", id="tui-chat-footer")
 
     def on_mount(self) -> None:
         self._load_history()
@@ -413,6 +431,16 @@ class ChatScreen(Screen[None]):
         log.scroll_end(animate=False)
         self._streaming = True
         self._assistant_accumulated = []
+        
+        # Phase 0.2: Calculate and display token/char count
+        input_tokens = count_tokens(text)
+        input_chars = len(text)
+        try:
+            footer = self.query_one("#tui-chat-footer", Static)
+            footer.update(f"  Esc 返回 · / 命令 · Ctrl+R 刷新  |  Tokens: {input_tokens} | Chars: {input_chars}  ")
+        except Exception:
+            pass
+        
         bridge: ManagerBridge = self.app.bridge
         self._stream_assistant_response(bridge, text)
 
@@ -448,6 +476,16 @@ class ChatScreen(Screen[None]):
         self._load_history()
         self._focus_input()
         self._assistant_accumulated = []
+        
+        # Phase 0.2: Update token count with reply tokens
+        reply_text = event.reply if hasattr(event, 'reply') else ''
+        total_tokens = count_tokens(reply_text)
+        total_chars = len(reply_text)
+        try:
+            footer = self.query_one("#tui-chat-footer", Static)
+            footer.update(f"  Esc 返回 · / 命令 · Ctrl+R 刷新  |  Tokens: {total_tokens} | Chars: {total_chars}  ")
+        except Exception:
+            pass
 
 # ---------------------------------------------------------------------------
 # New Session Modal
