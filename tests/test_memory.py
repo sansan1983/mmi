@@ -162,14 +162,16 @@ def test_search_does_not_cross_corrupt(isolated_home, fast_embedder):
 
 
 def test_rerank_no_llm_preserves_order(isolated_home, fast_embedder):
-    """无 LLM → 按原顺序截前 top_n。"""
-    memory.store_memory("s1", "## A\n", embedder=fast_embedder)
-    memory.store_memory("s2", "## B\n", embedder=fast_embedder)
-    memory.store_memory("s3", "## C\n", embedder=fast_embedder)
-    cands = memory.search_semantic("query", top_k=10, embedder=fast_embedder)
+    """无 LLM → rerank 按原顺序截前 top_n。"""
+    from mmi.core.memory import MemoryRecord
+    cands = [
+        MemoryRecord(memory_id="s1", session_id="s1", raw_excerpt="content A"),
+        MemoryRecord(memory_id="s2", session_id="s2", raw_excerpt="content B"),
+        MemoryRecord(memory_id="s3", session_id="s3", raw_excerpt="content C"),
+    ]
     out = memory.rerank("query", cands, top_n=2, llm=None)
     assert len(out) == 2
-    assert out == cands[:2]
+    assert [r.memory_id for r in out] == ["s1", "s2"]
 
 
 def test_rerank_with_llm_respects_id_order(isolated_home, fast_embedder):
