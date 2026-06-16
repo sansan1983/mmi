@@ -13,6 +13,7 @@ import os
 import re
 import sys
 from typing import Iterator
+import logging
 
 from rich.markdown import Markdown
 from rich.text import Text
@@ -28,6 +29,9 @@ from mmi.core import config as cfg_module
 from mmi.core.i18n import t as _t
 from mmi.core.manager import SessionManager
 from mmi.core.session import SessionMeta
+
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # ManagerBridge
