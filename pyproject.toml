@@ -23,12 +23,22 @@ dependencies = [
 [project.optional-dependencies]
 fuzzy = ["rapidfuzz>=3.0"]
 test = ["pytest>=8.0"]
+dev = ["ruff>=0.9", "pytest>=8.0"]
 memory = [
     "faiss-cpu>=1.7",
     "numpy>=1.24",
     "sentence-transformers>=2.0",
 ]
 context = ["tiktoken>=0.5"]
+all = [
+    "rapidfuzz>=3.0",
+    "pytest>=8.0",
+    "ruff>=0.9",
+    "faiss-cpu>=1.7",
+    "numpy>=1.24",
+    "sentence-transformers>=2.0",
+    "tiktoken>=0.5",
+]
 
 [project.scripts]
 mmi = "mmi.cli.main:main"
