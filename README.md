@@ -1,68 +1,89 @@
-# MMI — Multimodal Intelligence 多模态智能体系统
+# MMI — 多模态智能体系统
 
-> 带记忆引擎与多Agent调度的智能体系统。
-> 从 [C-Trim](https://github.com/sansan1983/ctrim) 演进而来。
+> 带记忆引擎与多 Agent 调度的新一代智能体框架。
 
-## 特性
+[![GitHub](https://img.shields.io/badge/GitHub-sansan1983%2Fmmi-brightgreen?style=flat-square&logo=github)](https://github.com/sansan1983/mmi)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue?style=flat-square&logo=python)](https://www.python.org/)
+[![Ruff](https://img.shields.io/badge/ruff-0%20errors-brightgreen?style=flat-square)](https://github.com/astral-sh/ruff)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow?style=flat-square)](LICENSE)
 
-- **三层架构**：接入层（CLI/TUI/MCP）→ Agent调度层 → 记忆引擎层
-- **记忆引擎**：FAISS语义检索 + SQLite FTS5关键词 + LLM重排 + 内存池
-- **多Agent调度**：主Agent → 意图分类 → 路由到子Agent/思维模式
-- **Provider插件系统**：支持5家预置商 + 自定义Python插件（`~/.mmi/providers/`）
-- **MCP Server**：暴露MMI能力为MCP Tools，支持Claude Desktop / Cursor接入
-- **评估框架**：ExactMatch/Contains/Func评估器，延迟统计（p50/p95/p99）
-- **TUI界面**：Textual终端UI，支持真流式输出、主题切换
-- **健康检测**：Provider自动降级，连续3次失败→切换
+**[English](README_en.md)** · **[开发文档](docs/INDEX.md)** · **[开发路线图](docs/ROADMAP/DEVELOPMENT_ROADMAP.md)**
+
+---
+
+## 是什么
+
+MMI（Multimodal Intelligence）是一个**带记忆引擎的多 Agent 智能体框架**。
+
+它的核心能力是：**让 AI 在多轮对话中真正记住上下文**——不是靠每次把历史发回去，而是通过 FAISS 向量语义检索 + SQLite FTS5 关键词双路搜索 + LLM 动态重排，自动构建最优上下文。
+
+---
+
+## 核心特性
+
+| 特性 | 说明 |
+|------|------|
+| **三层记忆架构** | FAISS 向量检索 → SQLite FTS5 关键词 → LLM 重排，三路合并去重 |
+| **动态上下文窗口** | 根据 token 余量自适应调整上下文，精确截断不丢关键信息 |
+| **多 Agent 调度** | 主 Agent → 意图分类 → 路由到子 Agent / 思维模式 |
+| **Provider 插件系统** | 支持 5 家预置 LLM 商 + 自定义 Python 插件 |
+| **MCP Server** | 暴露为 MCP Tools，接入 Claude Desktop / Cursor |
+| **评估框架** | ExactMatch / Contains / Func 评估器 + 延迟统计（p50/p95/p99） |
+| **健康检测** | Provider 自动降级，连续 3 次失败自动切换 |
+
+---
 
 ## 架构
 
 ```
+接入层（CLI / TUI） → Agent 调度层（意图分类 / 路由） → 记忆引擎层
+                                              ↓
+                                    FAISS + SQLite FTS5 + LLM 重排
+```
+
+```
 mmi/
-├── core/              # 记忆引擎层（会话/上下文/摘要/检索/热度/GC/评估/MCP）
-│   ├── llm.py        # LLMProvider抽象 + 5家预置实现
-│   ├── provider_registry.py  # 自定义Provider插件发现
+├── core/              # 记忆引擎层（session / storage / context / memory / heat / gc / evaluation / mcp）
+│   ├── llm.py        # LLMProvider 抽象 + 5 家预置实现
+│   ├── provider_registry.py  # 自定义 Provider 插件发现
 │   ├── memory.py     # MemoryEngine（FAISS + SQLite + 内存池）
-│   ├── evaluation.py  # EvalRunner评估框架
-│   ├── mcp_server.py # MCP Server（JSON-RPC 2.0）
+│   ├── context.py    # 上下文构建（三源合并 + 优先级截断）
+│   ├── summarizer.py # 摘要生成 + 版本链 + 后台线程
+│   ├── evaluation.py # EvalRunner 评估框架
+│   ├── mcp_server.py  # MCP Server（JSON-RPC 2.0）
 │   └── ...
-├── agent/            # Agent调度层（路由/思维模式/技能/Tool/追踪/EventBus）
-├── cli/              # CLI命令（new/list/chat/tui/doctor/stat）
-├── tui/              # 终端UI（textual）
+├── agent/            # Agent 调度层（路由 / 思维模式 / 技能 / Tool / 追踪）
+├── cli/              # CLI 命令（new / list / chat / tui / doctor / stat）
 └── tools/            # 诊断工具
 ```
 
-完整架构见 `MMI统一架构设计.md`。
+完整架构见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+
+---
 
 ## 快速开始
 
 ### 安装
 
 ```bash
-# 克隆仓库
 git clone https://github.com/sansan1983/mmi.git
 cd mmi
-
-# 安装（推荐可编辑模式）
 pip install -e ".[tui,fuzzy]"
-
-# 安装预提交钩子（可选）
-pre-commit install
 ```
 
 ### 配置
 
 ```bash
-# 交互式配置向导
+# 交互式配置向导（推荐）
 mmi config wizard
 
 # 或手动编辑 ~/.mmi/config.toml
-cat > ~/.mmi/config.toml << EOF
+cat > ~/.mmi/config.toml << 'EOF'
 [llm]
-provider = "deepseek"          # deepseek / glm / qwen / minimax
-api_key = "sk-..."            # 或用环境变量 DEEPSEEK_API_KEY
+provider = "deepseek"
+api_key = "sk-..."
 model = "deepseek-chat"
-base_url = "https://api.deepseek.com"
-api_style = "openai"
+base_url = "https://api.deepseek.com/v1"
 EOF
 ```
 
@@ -78,21 +99,23 @@ mmi list
 # 发送消息
 mmi chat <session_id> "你好"
 
-# 启动TUI（推荐）
+# 启动 TUI（推荐）
 mmi tui
 
-# 诊断
+# 诊断系统状态
 mmi doctor
 
-# 统计
+# 查看统计
 mmi stat
 ```
 
+---
+
 ## 进阶功能
 
-### 1. 自定义Provider插件
+### 自定义 Provider 插件
 
-在 `~/.mmi/providers/` 下创建Python文件：
+在 `~/.mmi/providers/` 下创建 Python 文件：
 
 ```python
 # ~/.mmi/providers/my_provider.py
@@ -100,31 +123,24 @@ from mmi.core.llm import LLMProvider, LLMError, Classification
 
 class MyProvider(LLMProvider):
     name = "my-provider"
-    
+
     def __init__(self, api_key: str, model: str = "v1", **kwargs):
         self._key = api_key
         self._model = model
-    
+
     def chat(self, messages, *, max_tokens=4096, temperature=0.7):
-        # 实现你的LLM调用
+        # 实现你的 LLM 调用
         ...
-    
+
     def classify(self, prompt, *, options):
         return Classification(choice=options[0], confidence=1.0)
 ```
 
-然后在 `config.toml` 中配置：
+然后在 `config.toml` 中配置 `provider = "my-provider"` 即可。
 
-```toml
-[llm]
-provider = "my-provider"
-api_key = "your-key"
-model = "v1"
-```
+### MCP Server（接入 Claude Desktop / Cursor）
 
-### 2. MCP Server（接入Claude Desktop / Cursor）
-
-在Claude Desktop配置中添加：
+在 Claude Desktop 配置中添加：
 
 ```json
 {
@@ -137,15 +153,9 @@ model = "v1"
 }
 ```
 
-可用的MCP Tools：
-- `mmi_list_sessions` — 列出所有会话
-- `mmi_get_session` — 获取会话详情
-- `mmi_chat` — 发送消息并获取回复
-- `mmi_list_skills` — 列出已注册技能
-- `mmi_search_memory` — 搜索记忆
-- `mmi_get_stats` — 获取系统统计
+可用的 MCP Tools：`mmi_list_sessions` · `mmi_get_session` · `mmi_chat` · `mmi_list_skills` · `mmi_search_memory` · `mmi_get_stats`
 
-### 3. 评估框架
+### 评估框架
 
 ```python
 from mmi.core.evaluation import EvalRunner, ExactMatchEvaluator, EvalSample
@@ -153,31 +163,21 @@ from mmi.core.evaluation import EvalRunner, ExactMatchEvaluator, EvalSample
 runner = EvalRunner()
 samples = [
     EvalSample(input_text="hello", expected_output="world", actual_output="world"),
-    ...
 ]
 report = runner.run(name="my-eval", samples=samples, evaluator=ExactMatchEvaluator())
 print(report.summary())
 ```
 
-### 4. 健康检测
+---
 
-自动启用，无需配置。当Provider连续3次失败时自动降级，成功时恢复。
-
-手动查询：
-
-```python
-from mmi.core.provider_health import get_healthy_provider
-provider = get_healthy_provider()
-```
-
-## CLI命令参考
+## CLI 命令
 
 | 命令 | 说明 |
 |------|------|
 | `mmi new <name>` | 创建新会话 |
 | `mmi list` | 列出所有会话 |
 | `mmi chat <session_id> <message>` | 发送消息 |
-| `mmi tui` | 启动终端UI |
+| `mmi tui` | 启动终端 UI（推荐） |
 | `mmi config wizard` | 交互式配置 |
 | `mmi config show` | 显示当前配置 |
 | `mmi doctor` | 诊断系统状态 |
@@ -185,28 +185,34 @@ provider = get_healthy_provider()
 | `mmi gc` | 手动触发垃圾回收 |
 | `mmi export <session_id>` | 导出会话 |
 
+---
+
 ## 测试
 
 ```bash
 # 运行所有测试
-python -m pytest tests/ -x
+pytest tests/ -x
 
-# 运行特定模块测试
-python -m pytest tests/test_integration.py -xvs
-python -m pytest tests/test_benchmark.py -xvs
-
-# 检查代码质量
+# 代码质量检查
 ruff check mmi/
 ```
 
-## 设计文档
+---
 
-| 文档 | 说明 |
+## 开发路线图
+
+当前阶段：**Phase 0｜止血** — Python TUI 修复 + GC 集成 + 质量门禁
+
+完整路线图见 [docs/ROADMAP/DEVELOPMENT_ROADMAP.md](docs/ROADMAP/DEVELOPMENT_ROADMAP.md)。
+
+---
+
+## 文档
+
+| 文档 | 用途 |
 |------|------|
-| `MMI统一架构设计.md` | 完整架构设计 |
-| `MMI_PHASE_PLAN.md` | 分期开发计划 |
-| `RULES.md` | 工作规范 |
-
-## 许可证
-
-MIT License
+| [docs/INDEX.md](docs/INDEX.md) | 文档总入口（**先读**） |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 系统架构设计 |
+| [docs/ROADMAP/DEVELOPMENT_ROADMAP.md](docs/ROADMAP/DEVELOPMENT_ROADMAP.md) | 开发路线图 |
+| [CLAUDE.md](CLAUDE.md) | AI 开发规范（铁律，必读） |
+| [docs/TESTS/test-policy.md](docs/TESTS/test-policy.md) | 测试规范 |
