@@ -262,17 +262,28 @@ def test_clear_empties(isolated_home, fast_embedder):
 
 def test_context_injects_recalled_memories(isolated_home, fast_embedder, monkeypatch):
     """loader 启用 memory 时,系统 prompt 末尾会追加 '相关历史记忆' 段。"""
-    # 先存几条记忆
-    memory.store_memory("session-old", "## postgres 分表\n讨论了 hash 策略。",
-                        summary="postgres 分表策略", embedder=fast_embedder)
-    memory.store_memory("session-older", "## redis 缓存\n策略。", embedder=fast_embedder)
+    from mmi.core import context as ctx_module
+    from mmi.core import memory as mem_module
+
+    fake_records = [
+        MemoryRecord(memory_id="m1", session_id="s1",
+                     raw_excerpt="postgres 分表策略：按 ID hash 分布。", title="postgres 分表"),
+    ]
+
+    def fake_search(query, *, top_k, embedder):
+        return fake_records
+
+    def fake_recall(query, config, *, embedder=None, llm=None, language="zh-CN"):
+        return fake_records
+
+    monkeypatch.setattr(mem_module, "search_semantic", fake_search)
+    monkeypatch.setattr(ctx_module, "recall_memories", fake_recall)
 
     # 写一个空 session
     from mmi.core.session import Session
     sid = "01AAAAAAAAAAAAAAAAAAAAAAAA"
     storage.write_session(Session.empty(sid, title="current"))
 
-    # 强制使用记忆 + 走快速 embedder
     cfg = LoaderConfig(memory=memory.MemoryConfig(enabled=True, top_k=5, rerank_top_n=3))
     ctx = build_context_detailed(sid, "postgres 怎么分表", config=cfg, language="zh-CN")
     # 系统 prompt 末尾应包含"相关历史记忆"
