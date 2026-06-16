@@ -32,7 +32,6 @@ from mmi.core.session import SessionMeta
 # ManagerBridge
 # ---------------------------------------------------------------------------
 
-
 class ManagerBridge:
     """Thin wrapper around SessionManager for TUI use."""
 
@@ -64,23 +63,19 @@ class ManagerBridge:
     def search(self, query: str) -> list[SessionMeta]:
         return self.mgr.search(query)
 
-
 # ---------------------------------------------------------------------------
 # Stream Messages
 # ---------------------------------------------------------------------------
-
 
 class StreamChunk(Message):
     def __init__(self, chunk: str) -> None:
         super().__init__()
         self.chunk = chunk
 
-
 class StreamDone(Message):
     def __init__(self, reply: str) -> None:
         super().__init__()
         self.reply = reply
-
 
 # 命令列表常量
 _COMMANDS: dict[str, str] = {
@@ -97,9 +92,7 @@ _COMMANDS: dict[str, str] = {
 # Session List Screen
 # ---------------------------------------------------------------------------
 
-
 LIST_TITLE = _t('tui.list.title', default='会话列表')
-
 
 class SessionListScreen(Screen[None]):
     """Main screen showing session list."""
@@ -215,11 +208,9 @@ class SessionListScreen(Screen[None]):
         elif cmd in ("refresh", "r"):
             self._load()
 
-
 # ---------------------------------------------------------------------------
 # Chat Screen
 # ---------------------------------------------------------------------------
-
 
 class ChatScreen(Screen[None]):
     """Chat conversation screen with streaming."""
@@ -451,11 +442,9 @@ class ChatScreen(Screen[None]):
         self._focus_input()
         self._assistant_accumulated = []
 
-
 # ---------------------------------------------------------------------------
 # New Session Modal
 # ---------------------------------------------------------------------------
-
 
 class NewSessionScreen(ModalScreen[str]):
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
@@ -500,11 +489,9 @@ class NewSessionScreen(ModalScreen[str]):
     def action_cancel(self) -> None:
         self.dismiss(None)
 
-
 # ---------------------------------------------------------------------------
 # Search Modal
 # ---------------------------------------------------------------------------
-
 
 class SearchScreen(ModalScreen[str]):
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
@@ -549,11 +536,9 @@ class SearchScreen(ModalScreen[str]):
     def action_cancel(self) -> None:
         self.dismiss(None)
 
-
 # ---------------------------------------------------------------------------
 # Command Modal
 # ---------------------------------------------------------------------------
-
 
 class CommandScreen(ModalScreen[str]):
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
@@ -608,11 +593,9 @@ class CommandScreen(ModalScreen[str]):
     def action_cancel(self) -> None:
         self.dismiss(None)
 
-
 # ---------------------------------------------------------------------------
 # Main App
 # ---------------------------------------------------------------------------
-
 
 class MmiTui(App[None]):
     """MMI TUI v3 — Main Application."""
@@ -768,7 +751,6 @@ class MmiTui(App[None]):
     def on_mount(self) -> None:
         self.push_screen(SessionListScreen())
 
-
 def run_tui() -> int:
     """Entry point: run the TUI."""
     app = MmiTui()
@@ -780,7 +762,6 @@ def run_tui() -> int:
         print(f"[tui_v3] Error: {e}", file=sys.stderr)
         return 1
     return 0
-
 
 if __name__ == "__main__":
     raise SystemExit(run_tui())

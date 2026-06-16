@@ -106,7 +106,7 @@ class GcReport:
 # ---------------------------------------------------------------------------
 
 
-def _parse_iso_utc(s: str | None) -> datetime | None:
+def parse_iso_utc(s: str | None) -> datetime | None:
     """解析 ISO 字符串为 UTC datetime。"""
     if s is None:
         return None

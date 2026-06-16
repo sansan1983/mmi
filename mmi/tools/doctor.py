@@ -105,17 +105,17 @@ def check_sessions() -> dict:
 
             # 基本完整性：非空 body
             if session.body and len(session.body.strip()) > 0:
-                print(f"  [✓][{state:6s}] {sid[:12]} | "
+                print(f"  [OK][{state:6s}] {sid[:12]} | "
                       f"{meta.title or 'untitled'} | heat={meta.heat:.1f} | "
                       f"body={len(session.body or '')}B | summary={meta.summary[:20] if meta.summary else '(stub)'}")
             else:
-                print(f"  [⚠][{state:6s}] {sid[:12]} | empty body")
+                print(f"  [WARN][{state:6s}] {sid[:12]} | empty body")
 
         except storage_mod.SessionNotFound:
-            print(f"  [✗] {sid[:12]}: missing session file")
+            print(f"  [FAIL] {sid[:12]}: missing session file")
             results["corrupt"] += 1
         except Exception as e:
-            print(f"  [✗] {sid[:12]}: {e}")
+            print(f"  [FAIL] {sid[:12]}: {e}")
             results["corrupt"] += 1
 
     return results

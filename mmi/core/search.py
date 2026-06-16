@@ -93,11 +93,11 @@ def tokenize(text: str, *, language: str = "zh-CN") -> list[str]:
         return []
     text = text.lower()
     if language.startswith("zh"):
-        return _tokenize_zh(text)
-    return _tokenize_en(text)
+        return tokenize_zh(text)
+    return tokenize_en(text)
 
 
-def _tokenize_en(text: str) -> list[str]:
+def tokenize_en(text: str) -> list[str]:
     text = re.sub(r"[^\w\s]", " ", text)
     seen: set[str] = set()
     out: list[str] = []
@@ -113,7 +113,7 @@ def _tokenize_en(text: str) -> list[str]:
     return out
 
 
-def _tokenize_zh(text: str) -> list[str]:
+def tokenize_zh(text: str) -> list[str]:
     text = re.sub(r"[^\w\s一-鿿]", " ", text)
     if _HAS_JIEBA:
         # jieba 模式:精确切词(全模式会有大量无意义 1-gram)

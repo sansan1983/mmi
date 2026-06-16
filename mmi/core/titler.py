@@ -317,17 +317,17 @@ def _tokenize(text: str, *, language: str) -> list[str]:
     # 统一小写
     text = text.lower()
     if language.startswith("zh"):
-        return _tokenize_zh(text)
-    return _tokenize_en(text)
+        return tokenize_zh(text)
+    return tokenize_en(text)
 
 
-def _tokenize_en(text: str) -> list[str]:
+def tokenize_en(text: str) -> list[str]:
     # 去掉标点，保留字母数字
     text = re.sub(r"[^\w\s]", " ", text)
     return [t for t in text.split() if len(t) >= 2]
 
 
-def _tokenize_zh(text: str) -> list[str]:
+def tokenize_zh(text: str) -> list[str]:
     # 去掉标点
     text = re.sub(r"[^\w\s一-鿿]", " ", text)
     # 单字噪音大，取 2-gram

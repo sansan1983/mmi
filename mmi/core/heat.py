@@ -277,9 +277,9 @@ def apply_heat_and_state(
         config = HeatConfig()
 
     # 解析时间
-    last_access = _parse_iso_utc(meta.last_access)
-    created_at = _parse_iso_utc(meta.created_at)
-    cold_since = _parse_iso_utc(meta.cold_since) if hasattr(meta, "cold_since") else None
+    last_access = parse_iso_utc(meta.last_access)
+    created_at = parse_iso_utc(meta.created_at)
+    cold_since = parse_iso_utc(meta.cold_since) if hasattr(meta, "cold_since") else None
 
     # 算 heat(P2-9:total_turns 给 content_weight,默认 0 = 短会话等效旧公式)
     new_heat = compute_heat(
@@ -311,7 +311,7 @@ def apply_heat_and_state(
 # ---------------------------------------------------------------------------
 
 
-def _parse_iso_utc(value: str | datetime | None) -> datetime | None:
+def parse_iso_utc(value: str | datetime | None) -> datetime | None:
     """把 ISO 字符串或 datetime 解析为带 tz 的 datetime。空串/None → None。"""
     if value is None:
         return None
