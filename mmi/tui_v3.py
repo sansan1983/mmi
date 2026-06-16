@@ -14,6 +14,7 @@ import re
 import sys
 from typing import Iterator
 
+from rich.markdown import Markdown
 from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
@@ -432,7 +433,9 @@ class ChatScreen(Screen[None]):
         self._assistant_accumulated.append(event.chunk)
         log = self.query_one("#tui-chat-log", RichLog)
         # Bug #2 FIX: 流式输出时自动滚动到底部
-        log.write(event.chunk, width=9999)
+        # Phase 0.1: 用 rich.markdown 渲染 Markdown（流式时保持原始文本可见，流结束后完整渲染）
+        md = Markdown(event.chunk)
+        log.write(md, width=9999)
         log.scroll_end(animate=False)
 
     def on_stream_done(self, event: StreamDone) -> None:
