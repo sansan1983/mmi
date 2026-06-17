@@ -44,11 +44,6 @@ def _handle_request(request: dict[str, Any]) -> None:
     if method == "list_sessions":
         from .manager import SessionManager  # lazy import to keep startup fast
         mgr = SessionManager()
-        # NOTE: SessionManager.list_sessions currently only accepts `limit` and
-        # always sorts by heat (manager.py:230-231). We still accept `sort` in
-        # the IPC params for forward-compat (TUI may pass "heat" | "last_access")
-        # and silently ignore unknown sort keys — keeps the wire contract stable
-        # if manager.py later adds sort options.
         sessions = mgr.list_sessions(
             limit=int(params.get("limit", 20)),
         )
@@ -60,6 +55,21 @@ def _handle_request(request: dict[str, Any]) -> None:
                     {"id": s.session_id, "title": s.title, "heat": s.heat}
                     for s in sessions
                 ],
+            },
+        })
+        return
+
+    if method == "create_session":
+        from .manager import SessionManager
+        mgr = SessionManager()
+        title = params.get("title", "untitled")
+        session_id = mgr.create(title=title)
+        _write_response({
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "session_id": session_id,
+                "title": title,
             },
         })
         return
