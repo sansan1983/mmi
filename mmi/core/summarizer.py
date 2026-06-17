@@ -232,7 +232,7 @@ def _get_pool() -> ThreadPoolExecutor:
 class _ThreadLike:
     """轻量包装,保留 Thread 风格的 .join(timeout=...) / .is_alive() 接口。"""
 
-    def __init__(self, future: Future):
+    def __init__(self, future: Future) -> None:
         self._f = future
         self._daemon = True   # ThreadPoolExecutor 内部都是非阻塞,语义近似 daemon
 

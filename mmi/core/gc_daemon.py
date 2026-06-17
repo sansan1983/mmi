@@ -75,7 +75,7 @@ class DaemonGC:
         self,
         config: GcDaemonConfig | None = None,
         gc_func: Callable | None = None,
-    ):
+    ) -> None:
         self.config = config or GcDaemonConfig()
         self._gc_func = gc_func or self._default_gc
         self._thread: threading.Thread | None = None

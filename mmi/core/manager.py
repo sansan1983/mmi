@@ -102,7 +102,7 @@ class SessionManager:
     # R9 9.4:默认并发度。__new__ 直接构造的实例(如测试 mock)也能继承这个默认值。
     _max_batch_workers: int = 4
 
-    def __init__(self, llm: LLMProvider | None = None, max_batch_workers: int = 4):
+    def __init__(self, llm: LLMProvider | None = None, max_batch_workers: int = 4) -> None:
         """R9 9.4:加 max_batch_workers 参,控制 batch_* 并发度。"""
         self.llm = llm if llm is not None else get_default_provider()
         self._max_batch_workers = max_batch_workers

@@ -168,7 +168,7 @@ class StorageError(Exception):
 class SessionNotFound(StorageError, FileNotFoundError):  # noqa: N818
     """请求的 session_id 在磁盘上找不到对应文件。"""
 
-    def __init__(self, session_id: str):
+    def __init__(self, session_id: str) -> None:
         self.session_id = session_id
         super().__init__(f"session not found: {session_id}")
 
@@ -176,7 +176,7 @@ class SessionNotFound(StorageError, FileNotFoundError):  # noqa: N818
 class SessionCorrupt(StorageError):  # noqa: N818
     """会话文件存在但 frontmatter 解析失败。"""
 
-    def __init__(self, session_id: str, reason: str):
+    def __init__(self, session_id: str, reason: str) -> None:
         self.session_id = session_id
         self.reason = reason
         super().__init__(f"session corrupt ({session_id}): {reason}")

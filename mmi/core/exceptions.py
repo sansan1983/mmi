@@ -13,7 +13,7 @@ class LLMRetryExhausted(Exception):  # noqa: N818
         last_error: 最后一次失败的底层异常
     """
 
-    def __init__(self, attempts: int, last_error: Exception):
+    def __init__(self, attempts: int, last_error: Exception) -> None:
         super().__init__(f"LLM retry exhausted after {attempts} attempts: {last_error}")
         self.attempts = attempts
         self.last_error = last_error

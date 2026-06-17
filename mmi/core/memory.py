@@ -198,7 +198,7 @@ class HashEmbedder:
 class SentenceTransformerEmbedder:
     """sentence-transformers 嵌入器（生产用）。"""
 
-    def __init__(self, model_name: str = DEFAULT_EMBEDDING_MODEL):
+    def __init__(self, model_name: str = DEFAULT_EMBEDDING_MODEL) -> None:
         # 延迟导入：用户没装 sentence-transformers 时不阻塞核心
         from sentence_transformers import SentenceTransformer  # noqa: WPS433
 
