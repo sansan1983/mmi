@@ -474,7 +474,7 @@ class OpenAILLMProvider(LLMProvider):
         except Exception as e:
             raise StreamError(f"OpenAI stream failed: {e}") from e
 
-    def classify(self, prompt, *, options) -> Classification:
+    def classify(self, prompt: str, *, options: list[str]) -> Classification:
         if not options:
             raise LLMError("classify: options must be non-empty")
 
@@ -743,7 +743,7 @@ class AnthropicLLMProvider(LLMProvider):
             # 中流其它错误(解析 / 未知):包成 StreamError
             raise StreamError(f"Anthropic stream error: {e}") from e
 
-    def classify(self, prompt, *, options) -> Classification:
+    def classify(self, prompt: str, *, options: list[str]) -> Classification:
         if not options:
             raise LLMError("classify: options must be non-empty")
         opts_str = " | ".join(options)

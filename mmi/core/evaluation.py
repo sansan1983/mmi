@@ -179,7 +179,7 @@ class EvalRunner:
         self._reports: list[EvalReport] = []
 
     @classmethod
-    def get_instance(cls) -> EvalRunner:
+    def get_instance(cls: type[EvalRunner]) -> EvalRunner:
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance

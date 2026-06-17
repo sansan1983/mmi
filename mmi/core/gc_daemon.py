@@ -41,7 +41,7 @@ class GcDaemonConfig:
     sleep_seconds: int = DEFAULT_SLEEP_SECONDS  # 定时触发间隔（秒）
 
     @classmethod
-    def from_dict(cls, d: dict) -> GcDaemonConfig:
+    def from_dict(cls: type[GcDaemonConfig], d: dict) -> GcDaemonConfig:
         return cls(
             enabled=bool(d.get("enabled", True)),
             chat_interval=int(d.get("chat_interval", DEFAULT_CHAT_INTERVAL)),
@@ -106,7 +106,7 @@ class DaemonGC:
         return GcDaemonConfig()
 
     @classmethod
-    def update_config(cls, cfg: GcDaemonConfig) -> None:
+    def update_config(cls: type[GcDaemonConfig], cfg: GcDaemonConfig) -> None:
         """更新配置并持久化到 config.toml。"""
         try:
             from . import config as cfg_mod
