@@ -35,7 +35,7 @@ import json
 import os
 import time
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -128,7 +128,7 @@ class LLMProvider(ABC):
 
     # ---- 流式（4.4 新增） --------------------------------------------
 
-    def stream_chat(self, messages: list[dict]):
+    def stream_chat(self, messages: list[dict]) -> Iterator[str]:
         """默认实现:走 chat,拆成单 chunk。子类可 override 走真流式。
 
         设计要点(spec 4.4):
@@ -223,7 +223,7 @@ class LLMProvider(ABC):
         *,
         max_attempts: int = 3,
         base_delay: float = 0.5,
-    ):
+    ) -> Iterator[str]:
         """流式重试,语义跟 chat_with_retry 对齐。
 
         关键设计(stream 的本质约束):
@@ -334,7 +334,7 @@ class EchoLLMProvider(LLMProvider):
     _CHAT_PREFIX = "[echo] "
     _CLASSIFY_DEFAULT_CONFIDENCE = 0.99
 
-    def chat(self, messages, *, max_tokens=4096, temperature=0.7) -> str:
+    def chat(self, messages: list[dict], *, max_tokens: int = 4096, temperature: float = 0.7) -> str:
         # 找最后一条 user 消息
         last_user = ""
         for m in reversed(messages):
@@ -343,7 +343,7 @@ class EchoLLMProvider(LLMProvider):
                 break
         return f"{self._CHAT_PREFIX}{last_user}"
 
-    def classify(self, prompt, *, options):
+    def classify(self, prompt: str, *, options: list[str]) -> Classification:
         if not options:
             raise LLMError("EchoLLMProvider.classify: options must be non-empty")
         return Classification(
@@ -352,7 +352,7 @@ class EchoLLMProvider(LLMProvider):
             raw=f"echo:{options[0]}",
         )
 
-    def stream_chat(self, messages, *, max_tokens=4096, temperature=0.7):
+    def stream_chat(self, messages: list[dict], *, max_tokens: int = 4096, temperature: float = 0.7) -> Iterator[str]:
         """Echo 流式:走默认实现即可(单 chunk 整段)。"""
         # 走基类默认实现(走 chat + 单 chunk),保持 echo 行为一致
         yield from super().stream_chat(messages)
@@ -403,9 +403,9 @@ class OpenAILLMProvider(LLMProvider):
 
     def chat(
         self,
-        messages,
+        messages: list[dict],
         *,
-        max_tokens=4096,
+        max_tokens: int = 4096,
         temperature=0.7,
         top_p: float | None = None,
         stop: str | list[str] | None = None,
@@ -441,7 +441,7 @@ class OpenAILLMProvider(LLMProvider):
             raise LLMError("OpenAI chat: empty content")
         return content
 
-    def stream_chat(self, messages, *, max_tokens=4096, temperature=0.7):
+    def stream_chat(self, messages: list[dict], *, max_tokens: int = 4096, temperature: float = 0.7) -> Iterator[str]:
         """OpenAI 真流式:同步迭代 stream=True 返回的 chunk。
 
         OpenAI SDK 的 stream=True 返回同步 `Stream[ChatCompletionChunk]`,
@@ -582,9 +582,9 @@ class AnthropicLLMProvider(LLMProvider):
 
     def chat(
         self,
-        messages,
+        messages: list[dict],
         *,
-        max_tokens=4096,
+        max_tokens: int = 4096,
         temperature=0.7,
         top_p: float | None = None,
         stop_sequences: list[str] | None = None,
@@ -626,7 +626,7 @@ class AnthropicLLMProvider(LLMProvider):
                     return text
         raise LLMError("Anthropic chat: no text in response")
 
-    def stream_chat(self, messages, *, max_tokens=4096, temperature=0.7):
+    def stream_chat(self, messages: list[dict], *, max_tokens: int = 4096, temperature: float = 0.7) -> Iterator[str]:
         """Anthropic 真 SSE 流式(DeepSeek / MiniMax 用 Anthropic 端点时也走这路径)。
 
         R8.5.2:替换原 fake 实现(只 yield 整段 chat 响应)。
