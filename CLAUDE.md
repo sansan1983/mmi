@@ -10,11 +10,11 @@
 
 | 项目 | 内容 |
 |------|------|
-| **当前阶段** | Phase 1 完成！Phase 2 进行中 |
-| **最近完成** | Phase 0(5步) + Phase 1(15步) + IPC修复 + 跨阶段修复 = **51步完成** |
+| **当前阶段** | Phase 2 进行中（Phase 0+1 质量修复完成） |
+| **最近完成** | Phase 0+1 全部完成 + 质量门禁修复 = **7 commits 今日** |
 | **下次动作** | 继续 Phase 2 剩余任务：跨会话记忆、多会话聚合 |
-| **代码质量** | 719 tests pass ✅, ruff check 0 errors ✅ |
-| **Git 提交** | 4 commits pushed to master ✅ |
+| **代码质量** | ruff 0 errors ✅, pytest 719 pass ✅, 原子写 ✅, pyproject.toml ruff配置 ✅ |
+| **Git 提交** | 7 commits pushed to master ✅ |
 
 **已完成的 Phase 概览**：
 
@@ -28,7 +28,7 @@
 
 | 日期 | 动作 | 产出 |
 |------|------|------|
-| 2026-06-17 | Phase 0+1 全部完成 + IPC create_session 修复 + plan.md 51步标记 | 4 commits (871b593, ae63894, 9163869) |
+| 2026-06-17 | Phase 0+1 全部完成 + 质量门禁全修复（ruff 270+ auto-fix + _INMEM_DIRTY bug + 原子写） | 7 commits (b0e3c26, 2a8c1d0, afd36cb, cc1e113, 9163869, ae63894, 871b593) |
 | 2026-06-16 | 文档全盘整理 + 路线图 v2.0 | `docs/ROADMAP/DEVELOPMENT_ROADMAP.md` |
 | 2026-06-16 | 项目根目录清理 | 删除 8 个无关目录/文件 |
 
@@ -126,7 +126,7 @@
 | GC Daemon | `mmi/core/gc_daemon.py` | 后台GC线程（已集成到Manager） |
 | Agent调度 | `mmi/agent/` | 意图分类 + 路由 |
 | TUI | `mmi/tui_v3.py` | Python 终端界面（已修复：token计数+异常处理） |
-| TS TUI | `tui-ts/` | TypeScript Ink 界面（IPC 未完成） |
+| ~~TS TUI~~ | ~~`tui-ts/`~~ | 已删除（TS TUI 已废弃） |
 | Provider管理 | `mmi/core/provider_registry.py` | 插件注册 + 多Provider管理 |
 | Provider健康 | `mmi/core/provider_health.py` | 故障检测 + 自动切换 |
 | LLM审计 | `mmi/core/audit.py` | 双层审计（规则引擎 + LLM） |
@@ -160,9 +160,24 @@ class SessionState(str, Enum):
 
 ### 技术栈
 
-Python 3.12 + pytest + ruff + FAISS + SQLite + rich + tiktoken + rapidfuzz + faiss-cpu + tiktoken + rapidfuzz + faiss-cpu
+Python 3.11 + pytest + ruff + FAISS + SQLite + rich + tiktoken + rapidfuzz + faiss-cpu
+
+### 质量门禁（每次 commit 前必须通过）
+
+```bash
+ruff check mmi/                    # 0 errors（pyproject.toml [tool.ruff] 配置已启用）
+pytest tests/ -x                   # 全部通过，无 skip
+```
+
+| 门禁 | 状态 | 说明 |
+|------|------|------|
+| Ruff 零告警 | ✅ | `ruff check mmi/` → All checks passed |
+| pytest -x | ✅ | 719 passed |
+| 原子写 | ✅ | `_atomic_write()` 用 `.tmp` + `os.rename()` |
+| 类型标注 | 🔄 | 核心公共函数已标注，剩余 16 处子类实现方法 |
 
 ---
+
 
 ## 文档结构
 
