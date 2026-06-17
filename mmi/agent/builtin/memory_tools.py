@@ -36,7 +36,7 @@ def memory_store(session_id: str, body: str, summary: str = "") -> str:
     """Store a memory entry."""
     try:
         from mmi.core.memory import store_memory
-        
+
         rec = store_memory(session_id, body, summary=summary)
         if rec:
             return f"Stored memory: id={rec.memory_id[:8] if rec.memory_id else '?'}..."
@@ -70,7 +70,7 @@ def memory_search(query: str, limit: int = 5) -> str:
     """Search memory entries."""
     try:
         from mmi.core.memory import search
-        
+
         results = search(query, k=limit)
         if not results:
             return "No matching memory entries found."

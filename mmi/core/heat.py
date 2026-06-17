@@ -22,9 +22,9 @@ ARCHITECTURE.md §8.4：
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Iterable
+from datetime import UTC, datetime
 
 from .session import SessionState
 
@@ -99,9 +99,9 @@ def recency_bonus(last_access: datetime, *, now: datetime | None = None) -> floa
     if last_access is None:
         return 0.0
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
     if last_access.tzinfo is None:
-        last_access = last_access.replace(tzinfo=timezone.utc)
+        last_access = last_access.replace(tzinfo=UTC)
     delta_days = max(0.0, (now - last_access).total_seconds() / 86400.0)
     # 避免 log10(1) = 0 导致除零；用 1 + log10(1 + days)
     decay = 1.0 + math.log10(1.0 + delta_days)
@@ -123,9 +123,9 @@ def age_penalty(created_at: datetime, *, now: datetime | None = None) -> float:
     if created_at is None:
         return 0.0
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
     if created_at.tzinfo is None:
-        created_at = created_at.replace(tzinfo=timezone.utc)
+        created_at = created_at.replace(tzinfo=UTC)
     delta_days = (now - created_at).total_seconds() / 86400.0
     if delta_days <= 0:
         return 0.0
@@ -156,7 +156,7 @@ def compute_heat(
     heat 可以是负数(很久没访问 + 很老的会话)
     """
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
     bonus = recency_bonus(last_access, now=now)
     penalty = age_penalty(created_at, now=now)
     raw = access_count * ACCESS_WEIGHT + bonus - penalty
@@ -198,7 +198,7 @@ def derive_state(
         (new_state, new_cold_since) —— cold_since 在离开 cold 时返回 None
     """
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
     if config is None:
         config = HeatConfig()
 
@@ -216,20 +216,14 @@ def derive_state(
         new_state = "cold"
         # 保留 cold_since；仅在首次进入 cold 时写入
         # prev_state 是 "cold" 或 "zombie" 都算"已经在 cold 区间" → 保留原 cold_since
-        if prev_state in ("cold", "zombie") and cold_since is not None:
-            new_cold_since = cold_since
-        else:
-            new_cold_since = now
+        new_cold_since = cold_since if prev_state in ("cold", "zombie") and cold_since is not None else now
 
     # zombie 单独判：cold 持续 > zombie_days
     # 关键：cold_since 应当是"实际进入 cold 的时间"，可能是上一次的 cold_since
     # （prev_state in ["cold", "zombie"]）或本次新写的 now。
     # 用 new_cold_since（已正确填充）来算 cold 持续时间。
     if new_state == "cold" and new_cold_since is not None:
-        if new_cold_since.tzinfo is None:
-            cs_aware = new_cold_since.replace(tzinfo=timezone.utc)
-        else:
-            cs_aware = new_cold_since
+        cs_aware = new_cold_since.replace(tzinfo=UTC) if new_cold_since.tzinfo is None else new_cold_since
         days_in_cold = (now - cs_aware).total_seconds() / 86400.0
         if days_in_cold > config.zombie_days:
             new_state = "zombie"
@@ -272,7 +266,7 @@ def apply_heat_and_state(
         - meta.cold_since = 新 cold_since（新增字段，frontmatter 多一行）
     """
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
     if config is None:
         config = HeatConfig()
 
@@ -316,7 +310,7 @@ def parse_iso_utc(value: str | datetime | None) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
     if not value:
         return None
     s = value.strip()
@@ -327,7 +321,7 @@ def parse_iso_utc(value: str | datetime | None) -> datetime | None:
             s = s[:-1] + "+00:00"
         dt = datetime.fromisoformat(s)
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         return dt
     except ValueError:
         return None
@@ -336,7 +330,7 @@ def parse_iso_utc(value: str | datetime | None) -> datetime | None:
 def _format_iso_utc(dt: datetime) -> str:
     """把 datetime 格式化为 '2026-06-02T10:00:00.000Z'。"""
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
 
 

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
+
 from mmi.agent.builtin import CodeReviewAgent, DocAgent  # noqa: F401
-from mmi.agent.modes import ThinkingMode as TM
+from mmi.agent.modes import ThinkingMode as TM  # noqa: N817
 from mmi.agent.orchestrator import Orchestrator
 from mmi.agent.registry import AgentMeta, AgentRegistry
 from mmi.cli import ensure_mmi_home
@@ -11,7 +13,7 @@ from mmi.cli import ensure_mmi_home
 
 def _register_builtin_agents(reg) -> None:
     """把内置 Agent 注册到 registry（幂等，重复注册 ValueError 被吞）。"""
-    try:
+    with contextlib.suppress(ValueError):
         reg.register(
             AgentMeta(
                 agent_id="code_review",
@@ -23,9 +25,7 @@ def _register_builtin_agents(reg) -> None:
             ),
             CodeReviewAgent,
         )
-    except ValueError:
-        pass
-    try:
+    with contextlib.suppress(ValueError):
         reg.register(
             AgentMeta(
                 agent_id="doc",
@@ -37,8 +37,6 @@ def _register_builtin_agents(reg) -> None:
             ),
             DocAgent,
         )
-    except ValueError:
-        pass
 
 
 def cmd_agent(args, mgr) -> int:

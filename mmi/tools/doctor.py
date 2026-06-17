@@ -8,20 +8,19 @@
 
 from __future__ import annotations
 
-import sys
 import os
-from datetime import datetime, timezone
+import sys
+from datetime import UTC, datetime
 
 # 确保能找到 mmi（未通过 pip install 安装时）
 _mmi_root = os.environ.get("MMI_ROOT", "")
 if _mmi_root and _mmi_root not in sys.path:
     sys.path.insert(0, _mmi_root)
 
-from mmi.core import storage as storage_mod  # noqa: E402
-from mmi.core import heat as heat_mod  # noqa: E402
 from mmi.core import gc as gc_mod  # noqa: E402
+from mmi.core import heat as heat_mod  # noqa: E402
 from mmi.core import paths as paths_mod  # noqa: E402
-
+from mmi.core import storage as storage_mod  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # 辅助函数
@@ -30,7 +29,7 @@ from mmi.core import paths as paths_mod  # noqa: E402
 def parse_dt(val: str | datetime) -> datetime:
     """Parse ISO timestamp string or datetime to aware datetime (UTC)."""
     if isinstance(val, datetime):
-        return val.replace(tzinfo=timezone.utc) if val.tzinfo is None else val
+        return val.replace(tzinfo=UTC) if val.tzinfo is None else val
     # 兼容 '2026-06-02T19:48:54.177Z' 和 '2026-06-02T19:48:54.177'
     s = val.replace("Z", "+00:00")
     return datetime.fromisoformat(s)
@@ -94,10 +93,7 @@ def check_sessions() -> dict:
             session = storage_mod.read_session(sid)
             # state 字段可能是 Enum 或 str；统一转成字符串比较
             raw_state = meta.state
-            if hasattr(raw_state, "value"):
-                state = raw_state.value.lower()
-            else:
-                state = str(raw_state).lower()
+            state = raw_state.value.lower() if hasattr(raw_state, "value") else str(raw_state).lower()
             if state in results:
                 results[state] += 1
             else:

@@ -304,10 +304,7 @@ def mask_api_key(key: str, visible_chars: int = 3) -> str:
     if not key:
         return ""
     prefix = "sk-"
-    if key.startswith(prefix):
-        key_body = key[len(prefix):]
-    else:
-        key_body = key
+    key_body = key[len(prefix):] if key.startswith(prefix) else key
     if len(key_body) <= visible_chars:
         return "sk-***"
     return f"sk-***{key_body[-visible_chars:]}"

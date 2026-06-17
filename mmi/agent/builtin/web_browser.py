@@ -11,8 +11,8 @@ import os
 import re
 import subprocess
 import sys
-import urllib.request
 import urllib.error
+import urllib.request
 
 from mmi.agent.tools import tool
 

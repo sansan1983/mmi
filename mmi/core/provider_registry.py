@@ -45,10 +45,10 @@ import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, ClassVar, Type
+from typing import Any, ClassVar
 
-from mmi.core.paths import get_root
 from mmi.core.llm import LLMProvider
+from mmi.core.paths import get_root
 
 
 @dataclass
@@ -58,7 +58,7 @@ class RegisteredProvider:
     name: str
     """Unique provider identifier (matches ``LLMProvider.name``)."""
 
-    cls: Type[LLMProvider]
+    cls: type[LLMProvider]
     """The LLMProvider subclass."""
 
     source_file: str
@@ -202,7 +202,7 @@ class ProviderRegistry:
     # Query
     # ------------------------------------------------------------------
 
-    def get_provider_class(self, name: str) -> Type[LLMProvider] | None:
+    def get_provider_class(self, name: str) -> type[LLMProvider] | None:
         """Return the LLMProvider subclass for *name*, or None."""
         reg = self._providers.get(name)
         return reg.cls if reg else None

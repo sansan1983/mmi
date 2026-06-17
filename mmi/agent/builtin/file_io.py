@@ -59,7 +59,7 @@ def file_read(
         if not os.path.exists(path):
             return f"Error: file not found: {path}"
 
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
 
         # Keyword search
@@ -132,7 +132,7 @@ def file_write(path: str, content: str, mode: str = "overwrite") -> str:
 
         if mode == "prepend":
             try:
-                with open(path, "r", encoding="utf-8") as f:
+                with open(path, encoding="utf-8") as f:
                     existing = f.read()
                 content = content + existing
             except FileNotFoundError:
@@ -187,7 +187,7 @@ def file_patch(path: str, old_content: str, new_content: str) -> str:
         if not os.path.exists(path):
             return f"Error: file not found: {path}"
 
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, encoding="utf-8") as f:
             content = f.read()
 
         if old_content not in content:

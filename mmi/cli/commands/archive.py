@@ -5,8 +5,8 @@ from __future__ import annotations
 import sys
 
 from mmi.cli import ensure_mmi_home
-from mmi.core import manager as mgr_module
 from mmi.core import i18n
+from mmi.core import manager as mgr_module
 
 
 def cmd_archive(args, mgr) -> int:

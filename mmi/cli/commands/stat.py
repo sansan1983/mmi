@@ -21,11 +21,11 @@ def cmd_stat(args, mgr) -> int:
     )
     total = len(all_meta)
     print("MMI Statistics")
-    print("  active:    {:4d}".format(total))
+    print(f"  active:    {total:4d}")
     for state in ["active", "warm", "cold", "zombie"]:
         cnt = state_counts.get(state, 0)
         pct = cnt / total * 100 if total else 0
-        print("    {}: {:4d} ({:.1f}%)".format(state, cnt, pct))
-    print("  trash:     {:4d}".format(len(trash_sids)))
-    print("  total size: {:.2f} MB".format(total_size / 1024 / 1024))
+        print(f"    {state}: {cnt:4d} ({pct:.1f}%)")
+    print(f"  trash:     {len(trash_sids):4d}")
+    print(f"  total size: {total_size / 1024 / 1024:.2f} MB")
     return 0

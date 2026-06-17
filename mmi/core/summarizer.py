@@ -23,9 +23,10 @@ ARCHITECTURE.md §6.3 / §8.3：
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from concurrent.futures import Future, ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from . import storage
@@ -85,7 +86,7 @@ def should_update_summary(
 ) -> bool:
     """判断是否需要重生摘要（§8.3 三条规则 OR）。"""
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
     current_turns = body.count("**User:**")
     current_chars = len(body)
     last_turns = last_summary_turns(meta)
@@ -130,7 +131,7 @@ def update_summary(
         True = 已更新;False = 失败 / 不需要更新
     """
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
     try:
         session = storage.read_session(session_id)
@@ -148,11 +149,7 @@ def update_summary(
     current_turns = body.count("**User:**")
     is_full = (last_t == 0) or (current_turns - last_t >= FULL_REBUILD_EVERY)
 
-    if is_full:
-        new_body = body
-    else:
-        # 增量:取自上次摘要以来的新 turn
-        new_body = _extract_new_turns(body, last_t)
+    new_body = body if is_full else _extract_new_turns(body, last_t)
 
     # 调 LLM 生成新摘要(无锁状态;可能耗时)
     prompt_system = (
@@ -240,11 +237,8 @@ class _ThreadLike:
         self._daemon = True   # ThreadPoolExecutor 内部都是非阻塞,语义近似 daemon
 
     def join(self, timeout: float | None = None) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self._f.result(timeout=timeout)
-        except Exception:
-            # 跟 threading.Thread.join 一致:不抛,只静默等
-            pass
 
     def is_alive(self) -> bool:
         return not self._f.done()
@@ -302,13 +296,10 @@ def _run_memory_store(session_id: str) -> None:
         if not body:
             return
         from . import memory as memory_module
-        try:
+        with contextlib.suppress(Exception):
             memory_module.store_memory(
                 session_id, body, turns_at=turns_at,
             )
-        except Exception:
-            # 记忆入库失败不抛:摘要是关键路径,记忆是锦上添花
-            pass
     except Exception:
         pass
 
@@ -365,7 +356,7 @@ def last_summary_at(meta: SessionMeta) -> datetime | None:
                     s = s[:-1] + "+00:00"
                 dt = datetime.fromisoformat(s)
                 if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
+                    dt = dt.replace(tzinfo=UTC)
                 return dt
             except (ValueError, AttributeError):
                 return None
@@ -443,5 +434,5 @@ def _clean_summary(text: str, *, language: str) -> str:
         if s.startswith(prefix):
             s = s[len(prefix):].strip()
     s = " ".join(s.split())
-    s = s.rstrip(".,;:!?。,;:!?")
+    s = s.rstrip(".,;:!?").rstrip("。，；：！？")
     return s

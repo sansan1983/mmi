@@ -166,9 +166,9 @@ def _fetch_with_style(
     url = _models_url(provider, style)
     headers = _auth_headers(style, api_key)
 
-    Client = client_factory or httpx.Client
+    client = client_factory or httpx.Client  # noqa: N806
     try:
-        with Client(timeout=timeout_s) as client:
+        with client(timeout=timeout_s) as client:
             resp = client.get(url, headers=headers)
     except httpx.HTTPError as e:
         raise ModelFetchError(f"网络错误: {e}") from e

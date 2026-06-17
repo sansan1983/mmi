@@ -20,7 +20,8 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
-from typing import Callable, Iterable, TypeVar
+from collections.abc import Callable, Iterable
+from typing import TypeVar
 
 __all__ = [
     "search_top_k",
@@ -71,7 +72,7 @@ _ZH_STOPWORDS = frozenset({
     "或", "但", "就", "也", "都", "还", "已", "将", "要", "能", "会", "可", "让",
     "把", "被", "对", "向", "从", "到", "为", "以", "及", "而", "因", "所以",
     "啊", "吗", "呢", "吧", "哦", "嗯", "呀", "哈", "哎", "啦", "嘛",
-    "这", "那", "哪", "谁", "什", "么", "怎", "样", "为", "何",
+    "这", "那", "哪", "谁", "什", "么", "怎", "样", "何",
     "请", "谢", "好", "不", "没", "无", "非",
     "什么", "怎么", "怎样", "为什么", "如何",
     "你好", "hello", "hi",
@@ -121,10 +122,7 @@ def tokenize_zh(text: str) -> list[str]:
     else:
         # 降级:2-gram(只对 ≥ 2 字 CJK 串)
         chars = [c for c in text if "一" <= c <= "鿿"]
-        if len(chars) < 2:
-            tokens = chars
-        else:
-            tokens = [chars[i] + chars[i + 1] for i in range(len(chars) - 1)]
+        tokens = chars if len(chars) < 2 else [chars[i] + chars[i + 1] for i in range(len(chars) - 1)]
     seen: set[str] = set()
     out: list[str] = []
     for t in tokens:

@@ -133,8 +133,8 @@ class AuditEngine:
         self,
         *,
         config: AuditConfig | None = None,
-        event_bus: "EventBus | None" = None,
-        llm_provider: "LLMProvider | None" = None,
+        event_bus: EventBus | None = None,
+        llm_provider: LLMProvider | None = None,
     ) -> None:
         self._config = config or AuditConfig()
         self._bus = event_bus
@@ -263,6 +263,7 @@ class AuditEngine:
         # Emit event
         if self._bus is not None:
             import time as _time
+
             from mmi.agent.event_bus import Event
             event_name = "audit.flagged" if not result.is_safe else "audit.passed"
             self._bus.publish(Event(

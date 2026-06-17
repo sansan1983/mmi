@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 
-class LLMRetryExhausted(Exception):
+class LLMRetryExhausted(Exception):  # noqa: N818
     """LLM 重试 max_attempts 次后仍失败。
 
     Attributes:

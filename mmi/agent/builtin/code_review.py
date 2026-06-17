@@ -46,9 +46,9 @@ class CodeReviewAgent(BaseAgent):
         self,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
         tools: list[ToolDef] | None = None,
-        skill_library: "SkillLibrary | None" = None,
-        tool_registry: "ToolRegistry | None" = None,
-        llm: "LLMProvider | None" = None,
+        skill_library: SkillLibrary | None = None,
+        tool_registry: ToolRegistry | None = None,
+        llm: LLMProvider | None = None,
     ) -> None:
         super().__init__(
             agent_id="code_review",
@@ -63,7 +63,7 @@ class CodeReviewAgent(BaseAgent):
     def run(
         self,
         user_message: str,
-        mode: "ThinkingMode | None" = None,
+        mode: ThinkingMode | None = None,
     ) -> str:
         """Review the supplied code and return structured findings.
 

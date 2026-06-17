@@ -6,7 +6,8 @@ import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from mmi.agent.event_bus import Event, bus as default_bus
+from mmi.agent.event_bus import Event
+from mmi.agent.event_bus import bus as default_bus
 
 if TYPE_CHECKING:
     from mmi.agent.event_bus import EventBus
@@ -34,16 +35,16 @@ class StepError:
 class PipelineCtx:
     session_id: str
     user_message: str
-    mode: "ThinkingMode | None" = None
-    intent: "IntentType | None" = None
+    mode: ThinkingMode | None = None
+    intent: IntentType | None = None
     agent_id: str | None = None
     agent: object = None  # BaseAgent | None
     reply: str | None = None
-    validation: "ValidationResult | None" = None
-    trace: list["TraceRecord"] = field(default_factory=list)
+    validation: ValidationResult | None = None
+    trace: list[TraceRecord] = field(default_factory=list)
     errors: list[StepError] = field(default_factory=list)
-    chat_result: "ChatResult | None" = None
-    manager: "SessionManager | None" = None
+    chat_result: ChatResult | None = None
+    manager: SessionManager | None = None
 
 
 @runtime_checkable
@@ -59,12 +60,12 @@ class Pipeline:
         self,
         steps: list[PipelineStep],
         *,
-        event_bus: "EventBus | None" = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         self.steps = steps
         self.bus = event_bus or default_bus
 
-    def run(self, ctx: PipelineCtx) -> "ChatResult":
+    def run(self, ctx: PipelineCtx) -> ChatResult:
         from mmi.agent.result import ChatResult
 
         started = time.perf_counter()

@@ -19,7 +19,7 @@ from mmi.agent.steps import (
     ValidateStep,
     default_steps,
 )
-from mmi.agent.trace import TraceRecord, Tracer
+from mmi.agent.trace import Tracer, TraceRecord
 from mmi.agent.validate import ValidationResult, ValidationRule, Validator
 
 __all__ = [

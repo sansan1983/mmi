@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import threading
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from enum import Enum, auto
 from pathlib import Path
 from typing import ClassVar
@@ -46,10 +47,10 @@ class Skill:
     update_count: int = 0
     version: str = "0.1.0"
     created_at: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
     updated_at: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
 
     # ------------------------------------------------------------------
@@ -117,10 +118,8 @@ class SkillLibrary:
 
     def _delete_file(self, skill_id: str) -> None:
         """Remove the JSON file for *skill_id* (best-effort)."""
-        try:
+        with contextlib.suppress(OSError):
             self._skill_path(skill_id).unlink(missing_ok=True)
-        except OSError:
-            pass
 
     def _load_all(self) -> None:
         """Load all skills from disk into ``_skills``."""
@@ -178,7 +177,7 @@ class SkillLibrary:
                 if hasattr(skill, key):
                     setattr(skill, key, value)
             skill.update_count += 1
-            skill.updated_at = datetime.now(timezone.utc).isoformat()
+            skill.updated_at = datetime.now(UTC).isoformat()
             self._save(skill)
             return skill
 

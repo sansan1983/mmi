@@ -22,6 +22,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import sqlite3
@@ -123,7 +124,7 @@ class MemoryRecord:
     vector: list[float] | None = None    # 加载时从 FAISS 取，存储时无
 
     @classmethod
-    def from_row(cls, row: sqlite3.Row, vector: list[float] | None = None) -> "MemoryRecord":
+    def from_row(cls, row: sqlite3.Row, vector: list[float] | None = None) -> MemoryRecord:
         return cls(
             memory_id=row["memory_id"],
             session_id=row["session_id"],
@@ -380,15 +381,15 @@ def _ensure_loaded(dim: int) -> None:
     线程安全;维度不匹配 → 重建空索引(允许切 embedding 模型)。
     """
     global _INMEM_INDEX, _INMEM_IDS, _INMEM_DIM, _INMEM_LOADED
-    if _INMEM_LOADED and _INMEM_DIM == dim:
+    if _INMEM_LOADED and dim == _INMEM_DIM:
         return
     with _INMEM_LOCK:
-        if _INMEM_LOADED and _INMEM_DIM == dim:
+        if _INMEM_LOADED and dim == _INMEM_DIM:
             return
         _INMEM_INDEX = _load_faiss_index(dim)
         _INMEM_IDS = _load_faiss_ids()
         _INMEM_DIM = dim
-        _INMEM_DIRTY = 0
+        _INMEM_DIRTY = 0  # noqa: N806
         _INMEM_LOADED = True
 
 
@@ -405,10 +406,10 @@ def _maybe_flush() -> None:
     with _INMEM_LOCK:
         if _INMEM_DIRTY < FLUSH_THRESHOLD:
             return
+        _INMEM_DIRTY = 0  # reset before writing (noqa: N806)
         try:
             _save_faiss_index(_INMEM_INDEX)
             _save_faiss_ids(_INMEM_IDS)
-            _INMEM_DIRTY = 0
         except Exception:
             pass
 
@@ -419,10 +420,10 @@ def flush_faiss() -> None:
     if _INMEM_INDEX is None:
         return
     with _INMEM_LOCK:
+        _INMEM_DIRTY = 0  # reset before writing (noqa: N806)
         try:
             _save_faiss_index(_INMEM_INDEX)
             _save_faiss_ids(_INMEM_IDS)
-            _INMEM_DIRTY = 0
         except Exception:
             pass
 
@@ -951,7 +952,7 @@ def clear_memories() -> None:
         global _INMEM_INDEX, _INMEM_IDS, _INMEM_DIRTY, _INMEM_LOADED, _INMEM_DIM
         _INMEM_INDEX = None
         _INMEM_IDS = []
-        _INMEM_DIRTY = 0
+        _INMEM_DIRTY = 0  # noqa: N806
         _INMEM_LOADED = False
         _INMEM_DIM = 0
         # 也清磁盘
@@ -970,10 +971,8 @@ def reset_for_test() -> None:
     with _db_lock:
         tls = getattr(_get_conn, "_tls", None)
         if tls is not None and getattr(tls, "conn", None) is not None:
-            try:
+            with contextlib.suppress(OSError):
                 tls.conn.close()
-            except OSError:
-                pass
         _get_conn._tls = None  # type: ignore[attr-defined]
     with _embedder_lock:
         _embedder = None

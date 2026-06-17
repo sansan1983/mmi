@@ -5,8 +5,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import re
+from datetime import UTC, datetime
 
 
 def parse_iso_utc(ts: str | None) -> datetime:
@@ -19,11 +19,11 @@ def parse_iso_utc(ts: str | None) -> datetime:
         datetime 对象
     """
     if ts is None:
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
     try:
         return datetime.fromisoformat(ts.replace("Z", "+00:00"))
     except (ValueError, AttributeError):
-        return datetime.now(timezone.utc)
+        return datetime.now(UTC)
 
 
 _TOKENIZE_EN_RE = re.compile(r'\b\w+\b', re.IGNORECASE)

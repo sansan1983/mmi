@@ -1,7 +1,7 @@
 """统一的 chat 结果数据契约。"""
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from mmi.agent.validate import ValidationResult
@@ -21,14 +21,14 @@ class ChatResult:
     """
 
     reply: str
-    intent: "IntentType"
+    intent: IntentType
     agent_id: str
-    validation: "ValidationResult | None"
+    validation: ValidationResult | None
     trace_ids: list[str] = field(default_factory=list)
     attempts: int = 1
     latency_ms: float = 0.0
     error: str | None = None
-    errors: list["StepError"] = field(default_factory=list)
+    errors: list[StepError] = field(default_factory=list)
     """R7 4.2 引入:Pipeline 累积的 step 错误列表(诊断信息,UI 一般只看 error 字符串)。"""
 
     def to_dict(self) -> dict[str, Any]:

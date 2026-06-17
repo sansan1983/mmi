@@ -26,14 +26,14 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     pass
 
-from . import classifier as cls_module
-from . import heat as heat_module
-from . import context
-from . import storage
-from . import summarizer
-from . import titler
-from .llm import LLMError, LLMProvider, get_default_provider
+import contextlib
+
 from mmi.core.session import DEFAULT_TITLE, Session, SessionMeta, new_session_id
+
+from . import classifier as cls_module
+from . import context, storage, summarizer, titler
+from . import heat as heat_module
+from .llm import LLMError, LLMProvider, get_default_provider
 
 log = logging.getLogger(__name__)
 
@@ -156,7 +156,7 @@ class SessionManager:
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=self._max_batch_workers) as ex:
             futures = [ex.submit(self.touch, sid) for sid in session_ids]
-            for fut, sid in zip(futures, session_ids):
+            for fut, sid in zip(futures, session_ids, strict=False):
                 try:
                     fut.result()
                 except Exception:
@@ -192,15 +192,16 @@ class SessionManager:
         out = {sid: r for sid, r in results.items() if not isinstance(r, BaseException)}
         return out
 
-    def batch_chat(self, items: list[tuple[str, str]]) -> list["ChatResult"]:
+    def batch_chat(self, items: list[tuple[str, str]]) -> list[ChatResult]:
         """顺序或并发执行 chat(),单条抛错不阻塞其它(返 ChatResult 带 error)。
 
         R9 9.4:多 item 时改用 ThreadPoolExecutor 并发,默认 4 worker。
         返回顺序与输入 items 顺序一致。
         """
+        from concurrent.futures import ThreadPoolExecutor
+
         from mmi.agent.result import ChatResult as _ChatResult
         from mmi.agent.router import IntentType
-        from concurrent.futures import ThreadPoolExecutor
 
         def _run(sid: str, msg: str) -> _ChatResult:
             try:
@@ -308,10 +309,8 @@ class SessionManager:
         # 追加 turn(内部已加锁)
         s = storage.append_turn(session_id, user_input, reply)
         # 跨会话记忆入库
-        try:
+        with contextlib.suppress(Exception):
             summarizer._schedule_memory_store(session_id)
-        except Exception:
-            pass
         # 摘要检查 + 调度
         try:
             will_update = summarizer.should_update_summary(s.meta, s.body)
@@ -385,11 +384,8 @@ class SessionManager:
         # 4) 跨会话记忆入库(每轮都跑,不等摘要)
         #   短会话(<20 轮/5000 字/24h)不触发摘要,但记忆照样要进库
         #   content_hash 已做去重,重复 body 不会重复入库
-        try:
+        with contextlib.suppress(Exception):
             summarizer._schedule_memory_store(session_id)
-        except Exception:
-            # store_memory 自身已静默,这里再兜一次
-            pass
 
         # 5) 摘要更新检查(§8.3)—— should_update 同步判,update 后台跑
         #   Phase 6:避免 LLM 慢调用阻塞 chat 主流程;UI 看到 summary_updated
@@ -513,10 +509,8 @@ class SessionManager:
         s = storage.append_turn(session_id, user_input, reply)
 
         # 5) 跨会话记忆入库
-        try:
+        with contextlib.suppress(Exception):
             summarizer._schedule_memory_store(session_id)
-        except Exception:
-            pass
 
         # 6) 摘要更新检查
         try:

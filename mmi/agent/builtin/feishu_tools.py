@@ -434,7 +434,7 @@ def feishu_card_stream(
     footer: str = "",
 ) -> str:
     """Create and optionally push to a Feishu streaming card.
-    
+
     Returns: summary of stream state (not the object itself,
     as tools can't return Python objects).
     """
@@ -442,7 +442,7 @@ def feishu_card_stream(
         card_id=card_id,
         max_body_chars=max_body_chars,
     )
-    
+
     if initial_content:
         update = stream.push(initial_content)
         finish = stream.finish(footer)
@@ -451,5 +451,5 @@ def feishu_card_stream(
             f"Update: {update[:200]}\n"
             f"Finish: {finish[:200]}"
         )
-    
+
     return f"Card '{card_id}' created, ready for push(). Use footer: {footer}"

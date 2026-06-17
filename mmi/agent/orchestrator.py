@@ -18,6 +18,7 @@ LLM 来源:Manager 注入 → self.llm → AgentRegistry.set_default_llm()。
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -54,8 +55,8 @@ class Orchestrator:
 
     def __init__(
         self,
-        manager: "SessionManager",
-        llm: "LLMProvider | None" = None,
+        manager: SessionManager,
+        llm: LLMProvider | None = None,
         *,
         router: Router | None = None,
         registry: AgentRegistry | None = None,
@@ -63,7 +64,7 @@ class Orchestrator:
         tracer: Tracer | None = None,
         skill_library: object = None,
         pipeline: Pipeline | None = None,
-        event_bus: "EventBus | None" = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         self.manager = manager
         self.llm = llm  # 不传则用 manager 自带
@@ -127,10 +128,8 @@ class Orchestrator:
         result = self.pipeline.run(ctx)
         # 3.x 兼容:每次成功的 chat 也记 trace(用 ctx 的 trace 列表)
         for tr in ctx.trace:
-            try:
+            with contextlib.suppress(Exception):
                 self.tracer.record(tr)
-            except Exception:
-                pass
         return result
 
     def chat_legacy(

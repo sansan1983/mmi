@@ -69,7 +69,7 @@ class Router:
     __slots__ = ("_use_llm", "_llm")
 
     def __init__(
-        self, use_llm: bool = True, llm: "LLMProvider | None" = None,
+        self, use_llm: bool = True, llm: LLMProvider | None = None,
     ) -> None:
         """Configure the router.
 

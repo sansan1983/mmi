@@ -5,8 +5,7 @@ from __future__ import annotations
 import sys
 
 from mmi.cli import ensure_mmi_home
-from mmi.core import i18n
-from mmi.core import storage
+from mmi.core import i18n, storage
 
 
 def cmd_chat(args, mgr) -> int:
@@ -46,7 +45,7 @@ def cmd_chat(args, mgr) -> int:
         print()
         print("[system prompt]")
         print(f"  {len(sys_content)} chars  |  {_loader.estimate_tokens([sys_msg])} tokens")
-        print("  %s" % sys_content[:200])
+        print(f"  {sys_content[:200]}")
         print()
         if ctx.estimated_tokens > config.max_tokens * 0.8:
             print(f"  [WARN] Within {int(config.max_tokens*0.8)} tokens (80%), consider compacting")

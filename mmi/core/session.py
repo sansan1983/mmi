@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, fields
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 from ulid import ULID
@@ -53,7 +53,7 @@ class SessionState(str):
         return (cls.ACTIVE, cls.WARM, cls.COLD, cls.ZOMBIE)
 
     @classmethod
-    def from_str(cls, s: str) -> "SessionState":
+    def from_str(cls, s: str) -> SessionState:
         if s not in cls.values():
             raise ValueError(f"Invalid state: {s!r}. Must be one of {cls.values()}")
         return cls(s)  # type: ignore[return-value]
@@ -97,9 +97,9 @@ def utcnow_iso() -> str:
     frontmatter 里所有时间字段都用这个格式。
     """
     # 用 datetime 手动拼，避免依赖外部 ISO 库
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    dt = datetime.now(timezone.utc)
+    dt = datetime.now(UTC)
     # 强制毫秒精度 + Z 后缀
     return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
 
@@ -115,7 +115,7 @@ def _parse_datetime(value: Any) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
     if isinstance(value, str):
         # 空字符串 → 字段不存在，跳过
         if not value.strip():
@@ -123,7 +123,7 @@ def _parse_datetime(value: Any) -> datetime | None:
         s = value.rstrip("Z")
         # 北京时间偏移处理：原始数据用 UTC 存储，已确认
         dt = datetime.fromisoformat(s)
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
     raise ValueError(f"_parse_datetime 不支持类型 {type(value).__name__}")
 
 
@@ -142,7 +142,7 @@ def _coerce_iso_str(value: Any) -> str:
         return value.strip()
     if isinstance(value, datetime):
         if value.tzinfo is None:
-            value = value.replace(tzinfo=timezone.utc)
+            value = value.replace(tzinfo=UTC)
         return value.strftime("%Y-%m-%dT%H:%M:%S.") + f"{value.microsecond // 1000:03d}Z"
     raise ValueError(f"_coerce_iso_str 不支持类型 {type(value).__name__}")
 
@@ -202,7 +202,7 @@ class SessionMeta:
         return d
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> "SessionMeta":
+    def from_dict(cls, d: dict[str, Any]) -> SessionMeta:
         """从 frontmatter dict 构造。
 
         容错策略：
@@ -257,7 +257,7 @@ class SessionMeta:
     # ----- 工厂方法 -------------------------------------------------------
 
     @classmethod
-    def new(cls, session_id: str, title: str = DEFAULT_TITLE) -> "SessionMeta":
+    def new(cls, session_id: str, title: str = DEFAULT_TITLE) -> SessionMeta:
         """构造一个全新的、刚创建的 SessionMeta（所有时间戳对齐到当下）。"""
         now = utcnow_iso()
         return cls(
@@ -287,6 +287,6 @@ class Session:
     # ----- 工厂方法 -------------------------------------------------------
 
     @classmethod
-    def empty(cls, session_id: str, title: str = DEFAULT_TITLE) -> "Session":
+    def empty(cls, session_id: str, title: str = DEFAULT_TITLE) -> Session:
         """构造一个空会话（刚创建、没任何 turn）。"""
         return cls(meta=SessionMeta.new(session_id, title), body="")

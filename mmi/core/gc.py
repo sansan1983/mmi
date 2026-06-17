@@ -21,10 +21,11 @@ GC 冷热分层设计（Round 0.4）：
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from . import paths, storage, heat as heat_module
+from . import heat as heat_module
+from . import paths, storage
 from .session import SessionState
 
 __all__ = [
@@ -113,7 +114,7 @@ def parse_iso_utc(s: str | None) -> datetime | None:
     try:
         # 兼容 +00:00 和 Z
         s = s.replace("Z", "+00:00")
-        return datetime.fromisoformat(s).astimezone(timezone.utc)
+        return datetime.fromisoformat(s).astimezone(UTC)
     except (ValueError, TypeError):
         return None
 
@@ -145,7 +146,7 @@ def gc_trash(
     if not tdir.exists():
         return report
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cutoff = now - timedelta(days=ttl_days)
 
     for sid in storage.list_trash_ids():
@@ -156,7 +157,7 @@ def gc_trash(
             if trashed_at is None:
                 # 兜底：用文件 mtime
                 p = storage.trash_path(sid)
-                mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
+                mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=UTC)
                 trashed_at = mtime
                 trashed_at_str = mtime.strftime("%Y-%m-%dT%H:%M:%S.") + f"{mtime.microsecond // 1000:03d}Z"
 
@@ -221,7 +222,7 @@ def gc_zombies(
     if not sdir.exists():
         return report
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     for sid in storage.list_session_ids():
         try:
@@ -291,7 +292,7 @@ def gc_cold(
     if not sdir.exists():
         return report
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     cutoff = now - timedelta(days=cold_ttl_days)
 
     for sid in storage.list_session_ids():

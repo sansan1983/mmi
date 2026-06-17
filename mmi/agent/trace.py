@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 import threading
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -70,7 +70,7 @@ class TraceRecord:
     tokens_used: int | None = None
     metadata: dict[str, Any] | None = None
     timestamp: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
+        default_factory=lambda: datetime.now(UTC).isoformat()
     )
 
     # ------------------------------------------------------------------
@@ -121,7 +121,7 @@ class Tracer:
 
     def __init__(
         self,
-        event_bus: "EventBus | None" = None,
+        event_bus: EventBus | None = None,
         *,
         traces_dir: Path | None = None,
     ) -> None:
@@ -165,9 +165,8 @@ class Tracer:
         """Append a trace record to its session's JSON Lines file."""
         path = self._trace_file(trace.session_id)
         line = json.dumps(trace.to_dict(include_private=False), ensure_ascii=False)
-        with self._lock:
-            with open(path, "a", encoding="utf-8") as f:
-                f.write(line + "\n")
+        with self._lock, open(path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
 
     # ------------------------------------------------------------------
     # Recording
@@ -187,6 +186,7 @@ class Tracer:
 
         if self._bus is not None:
             import time
+
             from mmi.agent.event_bus import Event
             self._bus.publish(Event(
                 name="trace.recorded",

@@ -35,8 +35,9 @@ import json
 import os
 import time
 from abc import ABC, abstractmethod
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from mmi.agent.result import ChatResult
@@ -160,7 +161,7 @@ class LLMProvider(ABC):
         *,
         max_attempts: int = 3,
         base_delay: float = 0.5,
-    ) -> "ChatResult":
+    ) -> ChatResult:
         """指数退避重试 chat()。
 
         可重试异常:
@@ -651,9 +652,11 @@ class AnthropicLLMProvider(LLMProvider):
         Yields:
             文本片段(每个 content_block_delta.text 一段)
         """
-        from mmi.core.exceptions import StreamError
-        import httpx
         import json as _json
+
+        import httpx
+
+        from mmi.core.exceptions import StreamError
 
         # 构造 payload(同 chat())
         system_parts: list[str] = []

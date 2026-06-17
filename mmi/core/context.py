@@ -244,8 +244,8 @@ def _compute_recent_window(
 
     依赖 P0-3(精确 token 估算)才能给准确 budget。
     """
-    DEFAULT_MIN = 5
-    DEFAULT_MAX = max(10, config.recent_turns * 2)
+    DEFAULT_MIN = 5  # noqa: N806
+    DEFAULT_MAX = max(10, config.recent_turns * 2)  # noqa: N806
 
     # 先估算 system + user token(强制必留)
     system_msg = {"role": "system", "content": config.system_prompt_zh if language.startswith("zh") else config.system_prompt_en}
@@ -332,10 +332,7 @@ def compose_sections(
     }
 
     # 1) system(带 summary + 跨会话记忆)
-    if language.startswith("zh"):
-        system = config.system_prompt_zh
-    else:
-        system = config.system_prompt_en
+    system = config.system_prompt_zh if language.startswith("zh") else config.system_prompt_en
     if ctx.summary:
         if language.startswith("zh"):
             system = f"{system}\n\n会话摘要:{ctx.summary}"
@@ -475,7 +472,7 @@ def _truncate_by_section(
     # 先删 recent
     while sections["recent"] and cur_total > config.max_tokens:
         sections["recent"].pop(0)
-        truncated_what = "recent" if not truncated_what else truncated_what
+        truncated_what = truncated_what if truncated_what else "recent"
         cur_total = estimate_tokens(flatten_sections(sections))
 
     # 再删 hits(recent 删完仍超)

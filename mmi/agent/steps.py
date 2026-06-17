@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 class ClassifyStep(PipelineStep):
     name: str = "classify"
     on_error: str = "fail"
-    router: "Router | None" = None
+    router: Router | None = None
 
     def run(self, ctx: PipelineCtx) -> PipelineCtx:
         if self.router is None:
@@ -39,7 +39,7 @@ class ClassifyStep(PipelineStep):
 class RouteStep(PipelineStep):
     name: str = "route"
     on_error: str = "fail"
-    router: "Router | None" = None
+    router: Router | None = None
 
     def run(self, ctx: PipelineCtx) -> PipelineCtx:
         if self.router is None or ctx.intent is None:
@@ -87,8 +87,8 @@ class RunStep(PipelineStep):
 class ValidateStep(PipelineStep):
     name: str = "validate"
     on_error: str = "degrade"
-    validator: "Validator | None" = None
-    event_bus: "EventBus | None" = None  # R8 4.9 引入:可注入
+    validator: Validator | None = None
+    event_bus: EventBus | None = None  # R8 4.9 引入:可注入
     # R9 9.2:节流配置
     issue_batch_threshold: int = 5
     """issues 数量 > 此值时改 publish 'validation.issue_batch' 单条事件,
@@ -155,8 +155,8 @@ class ValidateStep(PipelineStep):
 class PersistStep(PipelineStep):
     name: str = "persist"
     on_error: str = "degrade"
-    manager: "SessionManager | None" = None
-    event_bus: "EventBus | None" = None  # R8 4.9 引入:可注入
+    manager: SessionManager | None = None
+    event_bus: EventBus | None = None  # R8 4.9 引入:可注入
 
     def run(self, ctx: PipelineCtx) -> PipelineCtx:
         if self.manager is None:
@@ -183,11 +183,11 @@ class PersistStep(PipelineStep):
 
 def default_steps(
     *,
-    router: "Router",
+    router: Router,
     registry: object,
-    validator: "Validator",
-    manager: "SessionManager",
-    event_bus: "EventBus | None" = None,  # R8 4.9 引入
+    validator: Validator,
+    manager: SessionManager,
+    event_bus: EventBus | None = None,  # R8 4.9 引入
 ) -> list[PipelineStep]:
     """返回 6 个内建 Step 的默认装配。
 

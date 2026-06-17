@@ -9,11 +9,12 @@ Bugfix: 回车进入历史会话、自动滚动、斜杠命令补全。
 
 from __future__ import annotations
 
+import contextlib
+import logging
 import os
 import re
 import sys
-from typing import Iterator
-import logging
+from collections.abc import Iterator
 
 from rich.markdown import Markdown
 from rich.text import Text
@@ -29,7 +30,6 @@ from mmi.core import config as cfg_module
 from mmi.core.i18n import t as _t
 from mmi.core.manager import SessionManager
 from mmi.core.session import SessionMeta
-
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +75,8 @@ class ManagerBridge:
             return ""
 
     def delete_session(self, session_id: str) -> None:
-        try:
+        with contextlib.suppress(Exception):
             self.mgr.delete(session_id)
-        except Exception:
-            pass
 
     def stream_chat(self, session_id: str, user_input: str) -> Iterator[str]:
         yield from self.mgr.stream_chat(session_id, user_input)
@@ -431,7 +429,7 @@ class ChatScreen(Screen[None]):
         log.scroll_end(animate=False)
         self._streaming = True
         self._assistant_accumulated = []
-        
+
         # Phase 0.2: Calculate and display token/char count
         input_tokens = count_tokens(text)
         input_chars = len(text)
@@ -440,7 +438,7 @@ class ChatScreen(Screen[None]):
             footer.update(f"  Esc 返回 · / 命令 · Ctrl+R 刷新  |  Tokens: {input_tokens} | Chars: {input_chars}  ")
         except Exception:
             pass
-        
+
         bridge: ManagerBridge = self.app.bridge
         self._stream_assistant_response(bridge, text)
 
@@ -476,7 +474,7 @@ class ChatScreen(Screen[None]):
         self._load_history()
         self._focus_input()
         self._assistant_accumulated = []
-        
+
         # Phase 0.2: Update token count with reply tokens
         reply_text = event.reply if hasattr(event, 'reply') else ''
         total_tokens = count_tokens(reply_text)

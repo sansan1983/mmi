@@ -266,10 +266,7 @@ class MCPServer:
                 )
 
             try:
-                if tool.handler:
-                    result = tool.handler(tool_input)
-                else:
-                    result = {"error": "No handler registered"}
+                result = tool.handler(tool_input) if tool.handler else {"error": "No handler registered"}
                 return MCPResponse(
                     id=req_id,
                     result={

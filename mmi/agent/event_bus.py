@@ -1,10 +1,11 @@
 """轻量级 EventBus,同步派发,handler 异常隔离。"""
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import logging
 from collections import defaultdict
-from typing import Callable
+from collections.abc import Callable
 
 log = logging.getLogger(__name__)
 
@@ -25,10 +26,8 @@ class EventBus:
 
     def unsubscribe(self, event_name: str, handler: Callable[[Event], None]) -> None:
         if event_name in self._subs:
-            try:
+            with contextlib.suppress(ValueError):
                 self._subs[event_name].remove(handler)
-            except ValueError:
-                pass
 
     def publish(self, event: Event) -> None:
         for handler in list(self._subs.get(event.name, [])):

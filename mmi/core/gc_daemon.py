@@ -13,10 +13,11 @@
 from __future__ import annotations
 
 import atexit
+import contextlib
 import logging
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 log = logging.getLogger(__name__)
 
@@ -40,7 +41,7 @@ class GcDaemonConfig:
     sleep_seconds: int = DEFAULT_SLEEP_SECONDS  # 定时触发间隔（秒）
 
     @classmethod
-    def from_dict(cls, d: dict) -> "GcDaemonConfig":
+    def from_dict(cls, d: dict) -> GcDaemonConfig:
         return cls(
             enabled=bool(d.get("enabled", True)),
             chat_interval=int(d.get("chat_interval", DEFAULT_CHAT_INTERVAL)),
@@ -67,7 +68,7 @@ class DaemonGC:
         gc_func: 实际执行的 GC 函数（可注入，供测试 mock）
     """
 
-    _instance: "DaemonGC | None" = None
+    _instance: DaemonGC | None = None
     _lock_init = threading.Lock()
 
     def __init__(
@@ -83,7 +84,7 @@ class DaemonGC:
         self._lock = threading.Lock()
 
     @classmethod
-    def get_instance(cls) -> "DaemonGC":
+    def get_instance(cls) -> DaemonGC:
         if cls._instance is None:
             with cls._lock_init:
                 if cls._instance is None:
@@ -142,10 +143,8 @@ class DaemonGC:
 
     def _run_gc_once(self) -> None:
         """单次 GC 调用（在后台线程内或直接在调用线程内均可）。"""
-        try:
+        with contextlib.suppress(Exception):
             self._gc_func()
-        except Exception:
-            pass
 
     # ----- 线程管理 ---------------------------------------------------------
 

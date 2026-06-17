@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, ClassVar
@@ -103,7 +104,7 @@ class AgentRegistry:
         entry = self._agents.get(agent_id)
         return entry[1] if entry else None
 
-    def get(self, agent_id: str) -> "BaseAgent | None":
+    def get(self, agent_id: str) -> BaseAgent | None:
         """Return an instantiated agent for *agent_id*, or None if not found.
 
         R7 4.2 引入:Pipeline.InstantiateStep 直接调这个,无需 Orchestrator 包一层。
@@ -135,10 +136,8 @@ class AgentRegistry:
                 ("tool_registry", tool_registry),
             ]:
                 if hasattr(inst, attr):
-                    try:
+                    with contextlib.suppress(Exception):
                         setattr(inst, attr, val)
-                    except Exception:
-                        pass
             return inst
 
     def set_default_llm(self, llm: object) -> None:

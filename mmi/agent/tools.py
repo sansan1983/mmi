@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, ClassVar, TypeVar
+from typing import Any, ClassVar, TypeVar
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -27,7 +29,7 @@ class ToolDef:
     name: str
     description: str
     schema: dict = field(default_factory=dict)
-    func: "Callable[..., Any]" = field(default=None, repr=False)  # type: ignore[assignment]
+    func: Callable[..., Any] = field(default=None, repr=False)  # type: ignore[assignment]
 
 
 # --------------------------------------------------------------------------
@@ -133,8 +135,5 @@ def discover_builtin_tools() -> None:
         # 跳过内置 agent 类(它们不是工具)
         if mod_name.endswith(".agents"):
             continue
-        try:
+        with contextlib.suppress(Exception):
             importlib.import_module(mod_name)
-        except Exception:
-            # 单个 module 失败不影响其他
-            pass

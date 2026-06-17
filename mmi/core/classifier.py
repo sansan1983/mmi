@@ -13,7 +13,7 @@ ARCHITECTURE.md §8.1：
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 
 from .llm import LLMError, LLMProvider
 
@@ -35,7 +35,7 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 
-class Verdict(str, Enum):
+class Verdict(StrEnum):
     """判定结果。"""
 
     IS_TRASH = "trash"        # 应该移到 trash
@@ -183,7 +183,7 @@ def _build_prompt(turns: list[dict], *, language: str) -> str:
     """
     user_msgs = [t.get("content", "") for t in turns if t.get("role") == "user"]
     n = len(user_msgs)
-    
+
     if n == 0:
         sampled = []
     elif n <= 9:
@@ -201,7 +201,7 @@ def _build_prompt(turns: list[dict], *, language: str) -> str:
                 seen.add(msg)
                 deduped.append(msg)
         sampled = deduped
-    
+
     conversation = "\n".join(f"- {msg[:200]}" for msg in sampled)
 
     if language.startswith("zh"):

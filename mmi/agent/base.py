@@ -66,7 +66,7 @@ class BaseAgent(ABC):
         system_prompt: str,
         tools: list[ToolDef] | None = None,
         skill_library: SkillLibrary | None = None,  # type: ignore[name-defined]
-        tool_registry: "ToolRegistry | None" = None,  # type: ignore[name-defined]
+        tool_registry: ToolRegistry | None = None,  # type: ignore[name-defined]
         llm: LLMProvider | None = None,
     ) -> None:
         self.agent_id = agent_id
@@ -81,16 +81,16 @@ class BaseAgent(ABC):
     # 3.7 改进:生命周期钩子(默认 no-op,子类可覆盖)
     # ------------------------------------------------------------------
 
-    def on_start(self) -> None:
-        """Agent 启动时调(资源初始化)。默认 no-op。"""
+    def on_start(self) -> None:  # noqa: B027
+        """Agent 启动时调(资源初始化)。"""
         pass
 
-    def on_stop(self) -> None:
-        """Agent 停止时调(资源清理)。默认 no-op。"""
+    def on_stop(self) -> None:  # noqa: B027
+        """Agent 停止时调(资源清理)。"""
         pass
 
-    def on_error(self, exc: BaseException) -> None:
-        """Agent run() 抛异常时调。默认仅记 trace,子类可重写。"""
+    def on_error(self, exc: BaseException) -> None:  # noqa: B027
+        """Agent run() 抛异常时调。"""
         pass
 
     # ------------------------------------------------------------------
@@ -101,7 +101,7 @@ class BaseAgent(ABC):
     def run(
         self,
         user_message: str,
-        mode: "ThinkingMode | None" = None,
+        mode: ThinkingMode | None = None,
     ) -> str:
         """Execute the agent's task.
 
@@ -124,7 +124,7 @@ class BaseAgent(ABC):
     def _chat_with_llm(
         self,
         user_message: str,
-        mode: "ThinkingMode | None" = None,
+        mode: ThinkingMode | None = None,
         max_tokens: int = 1024,
         temperature: float = 0.3,
     ) -> str:

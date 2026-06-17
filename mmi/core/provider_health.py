@@ -86,7 +86,7 @@ class ProviderHealthMonitor:
         self,
         *,
         config: ProviderHealthConfig | None = None,
-        event_bus: "EventBus | None" = None,
+        event_bus: EventBus | None = None,
     ) -> None:
         self._providers: dict[str, _ProviderHealth] = {}
         self._config = config or ProviderHealthConfig()
@@ -117,6 +117,7 @@ class ProviderHealthMonitor:
         if self._bus is None:
             return
         import time as _time
+
         from mmi.agent.event_bus import Event
         self._bus.publish(Event(
             name=event_name,

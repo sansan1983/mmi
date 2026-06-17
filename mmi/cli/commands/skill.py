@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from mmi.agent.skill import Skill, SkillLibrary, SkillType
 from mmi.cli import ensure_mmi_home
@@ -41,7 +41,7 @@ def cmd_skill(args, mgr) -> int:
         return 0
 
     if sub == "create":
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         tags = [t.strip() for t in (args.tags or "").split(",") if t.strip()]
         skill = Skill(
             skill_id=args.skill_id,

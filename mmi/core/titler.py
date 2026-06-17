@@ -16,7 +16,7 @@ Phase 2 实现：
 from __future__ import annotations
 
 import re
-from typing import Iterable
+from collections.abc import Iterable
 
 from .llm import LLMError, LLMProvider
 
@@ -60,7 +60,7 @@ _ZH_STOPWORDS = frozenset({
     "或", "但", "就", "也", "都", "还", "已", "将", "要", "能", "会", "可", "让",
     "把", "被", "对", "向", "从", "到", "为", "以", "及", "而", "因", "所以",
     "啊", "吗", "呢", "吧", "哦", "嗯", "呀", "哈", "哎", "啦", "嘛",
-    "这", "那", "哪", "谁", "什", "么", "怎", "样", "为", "何",
+    "这", "那", "哪", "谁", "什", "么", "怎", "样", "何",
     "请", "谢", "好", "不", "没", "无", "非",
     "什么", "怎么", "怎样", "为什么", "如何",
     "你好", "hello", "hi",
@@ -280,7 +280,7 @@ def _clean_title(raw: str, *, language: str) -> str:
     # 多余空白
     s = re.sub(r"\s+", " ", s).strip()
     # 去掉结尾的标点
-    s = s.rstrip(".,;:!?。,;:!?")
+    s = s.rstrip(".,;:!?").rstrip("。，；：！？")
     return s
 
 
@@ -302,9 +302,7 @@ def _is_acceptable(title: str, turns: list[dict], *, language: str) -> bool:
         (t.get("content", "").strip() for t in turns if t.get("role") == "user"),
         "",
     )
-    if first_user and title.lower().strip() == first_user.lower().strip():
-        return False
-    return True
+    return not (first_user and title.lower().strip() == first_user.lower().strip())
 
 
 # ---------------------------------------------------------------------------

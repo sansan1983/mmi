@@ -24,18 +24,18 @@ import re
 import shutil
 import tempfile
 from collections import OrderedDict
-from contextlib import contextmanager
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
-from typing import Iterator
 
 import portalocker
 import yaml
 
+from . import heat as heat_module
 from . import paths
 from .session import Session, SessionMeta, utcnow_iso
-from . import heat as heat_module
 
 __all__ = [
     "StorageError",
@@ -64,14 +64,14 @@ __all__ = [
 # ---------------------------------------------------------------------------
 
 _MAX_CACHE_SIZE = 20  # 最多缓存 20 个 session；后续从 config.toml 读取
-_session_cache: OrderedDict[str, tuple[float, "Session"]] = OrderedDict()
-_meta_cache: OrderedDict[str, tuple[float, "SessionMeta"]] = OrderedDict()
+_session_cache: OrderedDict[str, tuple[float, Session]] = OrderedDict()
+_meta_cache: OrderedDict[str, tuple[float, SessionMeta]] = OrderedDict()
 _cache_lock = __import__("threading").RLock()
 
 
 def _cache_get_session(session_id: str):
     """从缓存获取 Session；若文件已被修改（mtime 不匹配）则返回 None。
-    
+
     返回对象的深拷贝，防止调用方修改污染缓存。
     """
     import copy
@@ -93,7 +93,7 @@ def _cache_get_session(session_id: str):
 
 def _cache_get_meta(session_id: str):
     """从缓存获取 SessionMeta；mtime 不匹配则返回 None。
-    
+
     返回对象的深拷贝，防止调用方修改污染缓存。
     """
     import copy
@@ -113,7 +113,7 @@ def _cache_get_meta(session_id: str):
         return copy.deepcopy(meta)
 
 
-def _cache_set_session(session_id: str, session: "Session") -> None:
+def _cache_set_session(session_id: str, session: Session) -> None:
     """写入缓存；若已满则淘汰 LRU（队首）。"""
     with _cache_lock:
         try:
@@ -126,7 +126,7 @@ def _cache_set_session(session_id: str, session: "Session") -> None:
             _session_cache.popitem(last=False)
 
 
-def _cache_set_meta(session_id: str, meta: "SessionMeta") -> None:
+def _cache_set_meta(session_id: str, meta: SessionMeta) -> None:
     """写入 meta 缓存。"""
     with _cache_lock:
         try:
@@ -165,7 +165,7 @@ class StorageError(Exception):
     """storage 层所有自定义异常的基类。"""
 
 
-class SessionNotFound(StorageError, FileNotFoundError):
+class SessionNotFound(StorageError, FileNotFoundError):  # noqa: N818
     """请求的 session_id 在磁盘上找不到对应文件。"""
 
     def __init__(self, session_id: str):
@@ -173,7 +173,7 @@ class SessionNotFound(StorageError, FileNotFoundError):
         super().__init__(f"session not found: {session_id}")
 
 
-class SessionCorrupt(StorageError):
+class SessionCorrupt(StorageError):  # noqa: N818
     """会话文件存在但 frontmatter 解析失败。"""
 
     def __init__(self, session_id: str, reason: str):
@@ -265,10 +265,8 @@ def _cleanup_lock_file(session_id: str) -> None:
     """
     lp = lock_path(session_id)
     if lp.exists():
-        try:
+        with suppress(OSError):
             lp.unlink()
-        except OSError:
-            pass
 
 
 # ---------------------------------------------------------------------------
@@ -439,10 +437,8 @@ def _atomic_write(path: Path, content: str) -> None:
         Path(tmp_name).rename(path)
     except Exception:
         # 清理临时文件
-        try:
+        with suppress(OSError):
             Path(tmp_name).unlink()
-        except OSError:
-            pass
         raise
 
 
@@ -623,10 +619,8 @@ def delete_trash_session(session_id: str) -> None:
     # trash 目录可能也有 lock 文件残留（兼容），顺手清掉
     lp = paths.get_trash_dir() / f"{session_id}.lock"
     if lp.exists():
-        try:
+        with suppress(OSError):
             lp.unlink()
-        except OSError:
-            pass
 
 
 # ---------------------------------------------------------------------------

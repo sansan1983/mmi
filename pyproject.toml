@@ -46,3 +46,33 @@ mmi = "mmi.cli.main:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["mmi*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+exclude = [
+    ".git",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".venv",
+    "__pycache__",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",       # pycodestyle errors
+    "W",       # pycodestyle warnings
+    "F",       # Pyflakes
+    "I",       # isort
+    "UP",      # pyupgrade
+    "N",       # pep8-naming
+    "B",       # flake8-bugbear
+    "SIM",     # flake8-simplify
+    "TID251",  # tidy imports
+]
+ignore = [
+    "E501",    # line length (use formatter)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["mmi"]

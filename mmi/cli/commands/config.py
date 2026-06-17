@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import replace
+
 from mmi.cli import ensure_mmi_home
 from mmi.core import config as cfg_mod
 from mmi.core import model_fetcher
 from mmi.core import providers as prov_mod
-
 
 # ---------------------------------------------------------------------------
 # 辅助函数
@@ -146,10 +146,7 @@ def _config_wizard(args) -> int:
 
     # 3) 拉模型列表
     if getattr(args, "no_fetch", False):
-        if getattr(args, "model", None):
-            model_id = args.model.strip()
-        else:
-            model_id = _prompt_text("模型 id(手填)", required=True)
+        model_id = args.model.strip() if getattr(args, "model", None) else _prompt_text("模型 id(手填)", required=True)
     else:
         print(
             f"\n正在拉取 {provider.name} 的可用模型"

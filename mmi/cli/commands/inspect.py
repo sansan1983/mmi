@@ -35,10 +35,10 @@ def cmd_inspect(args, mgr) -> int:
     print()
     print("[system prompt]")
     print(f"  {len(sys_content)} chars  |  {_loader.estimate_tokens([sys_msg])} tokens")
-    print("  %s" % sys_content[:200])
+    print(f"  {sys_content[:200]}")
 
     if ctx.recent_turns:
-        print("\n[recent turns]  last %d pairs" % len(ctx.recent_turns))
+        print(f"\n[recent turns]  last {len(ctx.recent_turns)} pairs")
         for j, turn in enumerate(ctx.recent_turns):
             role = turn.get("role", "?")
             cont = turn.get("content", "")
@@ -46,7 +46,7 @@ def cmd_inspect(args, mgr) -> int:
             print(f"    {cont[:150].replace(chr(10), ' ')}")
 
     if ctx.hit_turns:
-        print("\n[hit paragraphs]  %d" % len(ctx.hit_turns))
+        print(f"\n[hit paragraphs]  {len(ctx.hit_turns)}")
         for j, hit in enumerate(ctx.hit_turns):
             sc = hit.get("score", "?")
             cont = hit.get("content", "")
