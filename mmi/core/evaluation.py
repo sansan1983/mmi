@@ -185,7 +185,7 @@ class EvalRunner:
         return cls._instance
 
     @classmethod
-    def reset_instance(cls) -> None:
+    def reset_instance(cls: type[EvalRunner]) -> None:
         cls._instance = None
 
     def run(

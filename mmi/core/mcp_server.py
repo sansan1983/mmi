@@ -103,13 +103,13 @@ class MCPServer:
         self._setup_default_tools()
 
     @classmethod
-    def get_instance(cls) -> MCPServer:
+    def get_instance(cls: type[MCPServer]) -> MCPServer:
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
 
     @classmethod
-    def reset_instance(cls) -> None:
+    def reset_instance(cls: type[MCPServer]) -> None:
         cls._instance = None
 
     # ------------------------------------------------------------------

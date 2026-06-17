@@ -84,7 +84,7 @@ class DaemonGC:
         self._lock = threading.Lock()
 
     @classmethod
-    def get_instance(cls) -> DaemonGC:
+    def get_instance(cls: type[DaemonGC]) -> DaemonGC:
         if cls._instance is None:
             with cls._lock_init:
                 if cls._instance is None:

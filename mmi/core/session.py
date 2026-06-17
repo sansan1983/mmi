@@ -49,11 +49,11 @@ class SessionState(str):
     ZOMBIE = "zombie"
 
     @classmethod
-    def values(cls) -> tuple[str, str, str, str]:
+    def values(cls: type[SessionState]) -> tuple[str, str, str, str]:
         return (cls.ACTIVE, cls.WARM, cls.COLD, cls.ZOMBIE)
 
     @classmethod
-    def from_str(cls, s: str) -> SessionState:
+    def from_str(cls: type[SessionState], s: str) -> SessionState:
         if s not in cls.values():
             raise ValueError(f"Invalid state: {s!r}. Must be one of {cls.values()}")
         return cls(s)  # type: ignore[return-value]
@@ -202,7 +202,7 @@ class SessionMeta:
         return d
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> SessionMeta:
+    def from_dict(cls: type[SessionMeta], d: dict[str, Any]) -> SessionMeta:
         """从 frontmatter dict 构造。
 
         容错策略：
@@ -257,7 +257,7 @@ class SessionMeta:
     # ----- 工厂方法 -------------------------------------------------------
 
     @classmethod
-    def new(cls, session_id: str, title: str = DEFAULT_TITLE) -> SessionMeta:
+    def new(cls: type[SessionMeta], session_id: str, title: str = DEFAULT_TITLE) -> SessionMeta:
         """构造一个全新的、刚创建的 SessionMeta（所有时间戳对齐到当下）。"""
         now = utcnow_iso()
         return cls(
@@ -287,6 +287,6 @@ class Session:
     # ----- 工厂方法 -------------------------------------------------------
 
     @classmethod
-    def empty(cls, session_id: str, title: str = DEFAULT_TITLE) -> Session:
+    def empty(cls: type[Session], session_id: str, title: str = DEFAULT_TITLE) -> Session:
         """构造一个空会话（刚创建、没任何 turn）。"""
         return cls(meta=SessionMeta.new(session_id, title), body="")

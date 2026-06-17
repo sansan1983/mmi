@@ -94,13 +94,13 @@ class ProviderHealthMonitor:
         self._bus = event_bus
 
     @classmethod
-    def get_instance(cls) -> ProviderHealthMonitor:
+    def get_instance(cls: type[ProviderHealthMonitor]) -> ProviderHealthMonitor:
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
 
     @classmethod
-    def reset_instance(cls) -> None:
+    def reset_instance(cls: type[ProviderHealthMonitor]) -> None:
         """For testing only."""
         cls._instance = None
 

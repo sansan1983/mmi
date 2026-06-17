@@ -98,13 +98,13 @@ class ProviderRegistry:
         self._providers_dir.mkdir(parents=True, exist_ok=True)
 
     @classmethod
-    def get_instance(cls) -> ProviderRegistry:
+    def get_instance(cls: type[ProviderRegistry]) -> ProviderRegistry:
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
 
     @classmethod
-    def reset_instance(cls) -> None:
+    def reset_instance(cls: type[ProviderRegistry]) -> None:
         """For testing only."""
         cls._instance = None
 

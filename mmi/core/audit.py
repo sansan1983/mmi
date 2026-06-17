@@ -146,13 +146,13 @@ class AuditEngine:
         ]
 
     @classmethod
-    def get_instance(cls) -> AuditEngine:
+    def get_instance(cls: type[AuditEngine]) -> AuditEngine:
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
 
     @classmethod
-    def reset_instance(cls) -> None:
+    def reset_instance(cls: type[AuditEngine]) -> None:
         cls._instance = None
 
     # ------------------------------------------------------------------
