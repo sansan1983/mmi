@@ -10,18 +10,27 @@
 
 | 项目 | 内容 |
 |------|------|
-| **当前阶段** | Phase 0｜止血（TUI 修复 + GC 集成 + 质量门禁） |
-| **当前任务** | 详见 `docs/ROADMAP/DEVELOPMENT_ROADMAP.md` |
-| **最近完成** | 文档目录全盘整理 + 开发路线图 v2.0 重写（2026-06-16） |
-| **下次动作** | Phase 0 Task 0.1：Python TUI Markdown 渲染修复 |
+| **当前阶段** | Phase 1 完成！Phase 2 进行中 |
+| **最近完成** | Phase 0(5步) + Phase 1(15步) + IPC修复 + 跨阶段修复 = **51步完成** |
+| **下次动作** | 继续 Phase 2 剩余任务：跨会话记忆、多会话聚合 |
+| **代码质量** | 719 tests pass ✅, ruff check 0 errors ✅ |
+| **Git 提交** | 4 commits pushed to master ✅ |
+
+**已完成的 Phase 概览**：
+
+| Phase | 内容 | 状态 |
+|-------|------|------|
+| Phase 0 | TUI修复、GC集成、ruff门禁、token计数 | ✅ 完成 |
+| Phase 1 | CLI拆分、manager职责拆分、provider注册、Heat衰减、IPC修复 | ✅ 完成 |
+| Phase 2 | 跨会话记忆、chain-memory、多会话聚合 | 🔄 进行中 |
 
 **近期日志**（最近 3 条，完整历史见 `WORKLOG.md`）：
 
 | 日期 | 动作 | 产出 |
 |------|------|------|
+| 2026-06-17 | Phase 0+1 全部完成 + IPC create_session 修复 + plan.md 51步标记 | 4 commits (871b593, ae63894, 9163869) |
 | 2026-06-16 | 文档全盘整理 + 路线图 v2.0 | `docs/ROADMAP/DEVELOPMENT_ROADMAP.md` |
 | 2026-06-16 | 项目根目录清理 | 删除 8 个无关目录/文件 |
-| 2026-06-16 | 新 CLAUDE.md + RULES.md 重写 | 本文件生效 |
 
 ---
 
@@ -113,10 +122,17 @@
 | 上下文构建 | `mmi/core/context.py` | 三源合并（summary + hit_paragraphs + recent_turns） |
 | 会话管理 | `mmi/core/session.py` | Session 数据契约 + ULID |
 | 热 度 | `mmi/core/heat.py` | 热度公式 + 四态状态机 |
-| 垃圾回收 | `mmi/core/gc.py` | GC Daemon（框架已有，未集成） |
+| 垃圾回收 | `mmi/core/gc.py` | GC 清理（trash/zombie/cold）|
+| GC Daemon | `mmi/core/gc_daemon.py` | 后台GC线程（已集成到Manager） |
 | Agent调度 | `mmi/agent/` | 意图分类 + 路由 |
-| TUI | `mmi/tui_v3.py` | Python 终端界面（Phase 0 重点修复） |
+| TUI | `mmi/tui_v3.py` | Python 终端界面（已修复：token计数+异常处理） |
 | TS TUI | `tui-ts/` | TypeScript Ink 界面（IPC 未完成） |
+| Provider管理 | `mmi/core/provider_registry.py` | 插件注册 + 多Provider管理 |
+| Provider健康 | `mmi/core/provider_health.py` | 故障检测 + 自动切换 |
+| LLM审计 | `mmi/core/audit.py` | 双层审计（规则引擎 + LLM） |
+| CLI命令 | `mmi/cli/commands/` | 21个子命令（已拆分） |
+| IPC通信 | `mmi/core/ipc_server.py` | JSON-RPC 2.0（已补全 create_session） |
+| 模型获取 | `mmi/core/model_fetcher.py` | 多级缓存 |
 
 ### 三层架构
 
@@ -144,7 +160,7 @@ class SessionState(str, Enum):
 
 ### 技术栈
 
-Python 3.12 + pytest + ruff + FAISS + SQLite + rich
+Python 3.12 + pytest + ruff + FAISS + SQLite + rich + tiktoken + rapidfuzz + faiss-cpu + tiktoken + rapidfuzz + faiss-cpu
 
 ---
 
