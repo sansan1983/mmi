@@ -102,15 +102,23 @@ class Router:
         -------
         list[str]
             Agent identifiers, ordered by priority (highest first).
+
+        Notes
+        -----
+        P9.3 fallback:把当前不存在的 3 个 agent_id
+        (``data``/``brainstorm``/``tool_executor``)回退到 ``code_review``,
+        避免 InstantiateStep 拿到 None 时 RuntimeError。其余 id
+        (``code_review``/``doc``/``qa``)保留 —— 测试场景会用
+        ``fresh_registry`` fixture 注入对应 AgentMeta。
         """
         mapping: dict[IntentType, list[str]] = {
             IntentType.CODE_REVIEW:    ["code_review"],
             IntentType.DOC_GENERATION: ["doc"],
-            IntentType.DATA_ANALYSIS:  ["data"],
-            IntentType.BRAINSTORM:     ["brainstorm"],
-            IntentType.AUDIT:          ["code_review"],   # 没 audit Agent 时落到 code_review
+            IntentType.DATA_ANALYSIS:  ["code_review"],
+            IntentType.BRAINSTORM:     ["code_review"],
+            IntentType.AUDIT:          ["code_review"],
             IntentType.QA:             ["qa"],
-            IntentType.TOOL_CALL:      ["tool_executor"],
+            IntentType.TOOL_CALL:      ["code_review"],
             IntentType.UNKNOWN:        ["qa", "code_review"],
         }
         return mapping.get(intent, ["qa"])

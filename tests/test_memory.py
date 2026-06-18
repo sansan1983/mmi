@@ -593,11 +593,15 @@ def test_short_session_memory_stores(isolated_home, fast_embedder):
 
 
 def test_estimate_tokens_uses_tiktoken_when_available():
-    """tiktoken 装上时,英文精确算(13 tokens 是 hello world 的实际值)。"""
+    """tiktoken 装上时,英文精确算(13 tokens 是 hello world 的实际值)。
+
+    P9.7 修复:AGENTS.md 禁止 ``pytest.skip`` —— 改成 ``pytest.fail``,
+    确保 CI 环境缺依赖时立刻暴露(而不是静默跳过,留下隐性 bug)。
+    """
     from mmi.core import context as ctx
     from mmi.core.context import _HAS_TIKTOKEN
     if not _HAS_TIKTOKEN:
-        pytest.skip("tiktoken 未装,跳过精确路径测试")
+        pytest.fail("tiktoken not available - this test requires the exact-token path")
     msgs = [{"role": "user", "content": "hello world"}]
     n = ctx.estimate_tokens(msgs)
     # tiktoken "hello world" = 2 tokens; +4 role overhead = 6

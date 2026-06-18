@@ -13,7 +13,7 @@ from mmi.core.manager import SessionManager
 
 def _skill_list() -> int:
     lib = SkillLibrary.get_instance()
-    skills = list(lib._skills.values()) if hasattr(lib, "_skills") else []
+    skills = lib.all()
     if not skills:
         print(i18n.t("skill.list.empty"))
         return 0
@@ -43,7 +43,7 @@ def _skill_create(args: Namespace) -> int:
     skill = Skill(
         skill_id=args.skill_id,
         name=args.name,
-        skill_type=SkillType.BUILTIN,
+        skill_type=SkillType.USER,
         content=args.content,
         apply_scene=args.apply_scene,
         tags=tags,

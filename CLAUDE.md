@@ -10,11 +10,11 @@
 
 | 项目 | 内容 |
 |------|------|
-| **当前阶段** | Phase 8 完成（config.py wizard 残留 i18n 化） |
-| **最近完成** | P8：i18n 化 `config.py` wizard 最后 3 处硬编码（`"自定义 base_url"` / `"API 风格 (openai/anthropic)"` / `"(无)"`），补 3 词条到 `zh-CN.json`/`en-US.json`。**config.py wizard 全部 i18n 化完成**（32 处 prompt + 3 处 show + 2 处辅助 + 3 处残留 = 40 处） |
-| **下次动作** | 无（本次重构任务完成） |
-| **代码质量** | ruff 0 errors ✅, pytest 690 pass ✅, 原子写 ✅, 单例线程安全 ✅, 时间工具统一 ✅, 子命令 dispatch 统一 ✅, 主入口 dispatch 字典化 ✅, chat pipeline 统一 ✅, llm 包化 ✅, memory 包化 ✅, tui_v3 包化 ✅, cmd_*.py i18n 化（13 文件,~120 处）✅, cmd_*.py 类型标注（18 公共 + 8 内部 + 2 dispatch）✅, chat inspect 抽 helper（-29 行）✅, config.py wizard 全部 i18n 化（40 处）✅ |
-| **Git 提交** | P0+P1+P2-1~5+P3-A+B+C+D+E+P4+P5+P6+P7 改动 **已提交**（commit 1-6）；P8 改动 **未提交** |
+| **当前阶段** | Phase 9 完成（3 类紧急工程债清理） |
+| **最近完成** | P9：清 3 类紧急工程债（6 个子任务）。**死桩**:`validate._llm_deep_audit` 死代码 + `add_high_risk_intent`/`use_llm_deep_audit` 公开 API 全删（默认 high_risk 空 + 简化原则）；`ipc_stub.stream_chat` 假流式改为 `get_default_provider().stream_chat` + `anyio.to_thread.run_sync` 桥接（修 `ipc_server.py:78` TODO）；`router.route()` 把 `data`/`brainstorm`/`tool_executor` 改 fallback 到 `code_review`（qa/code_review/doc 保留以兼容 fresh_registry fixture）。**违规**:`test_cli_tui.py` 删 `_have_node` + `skipif`（`mmi tui` 是 Python Textual 不需 node）；`test_context.py:67` 删 try/except + `pytest.skip`（`build_context_detailed` 真实存在）；`test_memory.py:600` 条件性 `pytest.skip` 改 `pytest.fail`（AGENTS.md 铁律零容忍）；`parser.py:70` description 改 "Python Textual"（旧 "TypeScript + Ink" 误导）。**红线**:`SkillType` 加 `USER` 枚举；`SkillLibrary.all()` 公开方法（snapshot 替代私有 `_skills.values()` 访问）；`cmd_skill create` 用 `SkillType.USER`（不再硬编 BUILTIN，违反 ARCHITECTURE §5.4）。**清理**:`__pycache__/test_audit.pyc` + `test_provider_health.pyc` 残留删。ruff 0 errors ✅, pytest **690 pass / 0 skip** ✅ |
+| **下次动作** | 进入 Phase 10 候选:TUI i18n 漏字（screens.py 30+ 处） 或 Phase 4 大块（manager.py 拆分 / MCP 完善 / 4 个缺失 Agent 实现）。建议先做 TUI i18n（3-4h 收口） |
+| **代码质量** | ruff 0 errors ✅, pytest 690 pass / 0 skip ✅, 原子写 ✅, 单例线程安全 ✅, 时间工具统一 ✅, 子命令 dispatch 统一 ✅, 主入口 dispatch 字典化 ✅, chat pipeline 统一 ✅, llm 包化 ✅, memory 包化 ✅, tui_v3 包化 ✅, cmd_*.py i18n 化（13 文件,~120 处）✅, cmd_*.py 类型标注（18 公共 + 8 内部 + 2 dispatch）✅, chat inspect 抽 helper（-29 行）✅, config.py wizard 全部 i18n 化（40 处）✅, 3 类紧急工程债清理（6 子任务）✅ |
+| **Git 提交** | P0+P1+P2-1~5+P3-A+B+C+D+E+P4+P5+P6+P7 改动 **已提交**（commit 1-6）；P8 + P9 改动 **未提交** |
 
 **已完成的 Phase 概览**：
 
@@ -28,6 +28,7 @@
 
 | 日期 | 动作 | 产出 |
 |------|------|------|
+| 2026-06-18 | P9：清 3 类紧急工程债（6 子任务） | **死桩**:`validate._llm_deep_audit`/`add_high_risk_intent`/`use_llm_deep_audit` 全删（默认 high_risk 空集 + 简化原则）；`ipc_stub.stream_chat` 改 `get_default_provider().stream_chat` + `anyio.to_thread.run_sync`；`router.route` 把 3 个不存在的 agent_id fallback 到 `code_review`。**违规**:`test_cli_tui.py:18` 删 skipif（Python Textual 不需 node）；`test_context.py:67` 删 try/except skip（`build_context_detailed` 真实存在）；`test_memory.py:600` 条件 skip 改 fail。**红线**:`SkillType` 加 `USER`；`SkillLibrary.all()` 公开 snapshot；`cmd_skill create` 用 `USER`（不再硬编 BUILTIN）；`parser.py:70` description 改 "Python Textual"；清 `__pycache__/` 2 个 orphan .pyc |
 | 2026-06-18 | P8：i18n 化 config.py wizard 最后 3 处硬编码 | 3 词条（`wizard.custom_base_url_prompt`/`wizard.api_style_prompt`/`wizard.no_env_hint`）+ 3 处 `_prompt_text()` 调用改 `i18n.t()`。config.py wizard 全部 i18n 化完成（40 处） |
 | 2026-06-18 | P7：抽 `chat.py` `--inspect` 模式为 `_chat_inspect(sid, lang) -> int` 私有 helper | chat.py -29 行（30 行内联 → 1 行 dispatch + 30 行 helper）；cmd_chat 主路径更清晰；保留 `from mmi.core import context as _loader` lazy import 模式 |
 | 2026-06-18 | P6：补全 cmd_*.py 公共 API 类型标注 | 18 个 `cmd_X(args: Namespace, mgr: SessionManager) -> int` + 8 个内部 helper（agent/memory/skill/config）+ `_dispatch`/`_load_command` 同样加。统一 `from argparse import Namespace` + `from mmi.core.manager import SessionManager` import 模式 |

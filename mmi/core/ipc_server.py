@@ -75,7 +75,7 @@ def _handle_request(request: dict[str, Any]) -> None:
         return
 
     if method == "send_message":
-        from .llm import stream_chat  # TODO: real implementation in M4 wiring
+        from .llm import stream_chat
 
         async def _run() -> None:
             async for delta in stream_chat(

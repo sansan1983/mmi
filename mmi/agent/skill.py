@@ -29,6 +29,14 @@ class SkillType(Enum):
     BUILTIN = auto()
     """Shipped with the framework."""
 
+    USER = auto()
+    """P9.6 引入:用户用 ``mmi skill create`` 手动创建的 skill。
+
+    区别于 BUILTIN(框架自带)与 EVOLUTION(从用户习惯中演化)——
+    USER 是人工录入的最高优先级来源,ARCHITECTURE.md §5.4
+    红线"不做全自动入库"对应的就是它。
+    """
+
 
 @dataclass
 class Skill:
@@ -184,6 +192,15 @@ class SkillLibrary(mmi.core._patterns.Singleton):
     def get(self, skill_id: str) -> Skill | None:
         """Return a skill by ID, or None."""
         return self._skills.get(skill_id)
+
+    def all(self) -> list[Skill]:
+        """Return all skills in the library (snapshot, not a live view).
+
+        P9.6 引入:替代直接访问 ``_skills.values()`` 的私有属性用法。
+        返回 list 快照,避免 caller 持有 dict view 后被后续并发修改牵连。
+        """
+        with self._lock:
+            return list(self._skills.values())
 
     # ------------------------------------------------------------------
     # Discovery

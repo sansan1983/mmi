@@ -1,4 +1,4 @@
-"""Output validation — rule engine + optional LLM deep audit."""
+"""Output validation — rule engine (regex / substring / length checks)."""
 
 from __future__ import annotations
 
@@ -38,17 +38,16 @@ class ValidationRule:
 class Validator:
     """Validates agent output before it is returned to the user.
 
-    Two-stage pipeline:
-    1. Fast rule engine (regex / substring / length checks).
-    2. Optional LLM deep audit for high-risk outputs.
+    P9.1 简化:原本的"两阶段(rule engine + LLM deep audit)"减为单阶段
+    (rule engine only)。LLM deep audit 留待未来 Phase;目前不可用、不暴露
+    开关,避免半成品 API 让人误用。
     """
 
-    __slots__ = ("_rules", "_use_llm_deep_audit", "_high_risk_intents")
+    __slots__ = ("_rules",)
 
     def __init__(
         self,
         rules: list[ValidationRule] | None = None,
-        use_llm_deep_audit: bool = True,
     ) -> None:
         """Configure the validator.
 
@@ -57,42 +56,27 @@ class Validator:
         rules : list[ValidationRule], optional
             Rule set for the fast engine. A default set covers common
             safety and format concerns.
-        use_llm_deep_audit : bool
-            Enable LLM-based deep audit for high-risk intents.
         """
         self._rules = rules or _default_rules()
-        self._use_llm_deep_audit = use_llm_deep_audit
-        self._high_risk_intents: set[IntentType] = set()
-
-    def add_high_risk_intent(self, intent: IntentType) -> None:
-        """Mark an intent type as high-risk (triggers deep audit)."""
-        self._high_risk_intents.add(intent)
 
     def check(self, text: str, intent: IntentType) -> ValidationResult:
-        """Run the full validation pipeline.
+        """Run the validation pipeline (rule engine only).
 
         Parameters
         ----------
         text : str
             Agent output to validate.
         intent : IntentType
-            Intent type of the originating request.
+            Intent type of the originating request (currently unused,
+            reserved for future deep-audit routing).
 
         Returns
         -------
         ValidationResult
             ``passed=True`` if all checks pass, ``passed=False`` otherwise.
         """
-        # Stage 1: fast rule engine
-        rule_result = self._check_rules(text)
-        if not rule_result.passed:
-            return rule_result
-
-        # Stage 2: LLM deep audit for high-risk intents
-        if self._use_llm_deep_audit and intent in self._high_risk_intents:
-            return self._llm_deep_audit(text, intent)
-
-        return ValidationResult(passed=True, issues=())
+        del intent  # 预留参数,当前 rule engine 不区分 intent
+        return self._check_rules(text)
 
     def _check_rules(self, text: str) -> ValidationResult:
         """Run the fast rule engine.
@@ -143,10 +127,6 @@ class Validator:
                     ))
 
         return ValidationResult(passed=len(issues) == 0, issues=tuple(issues))
-
-    def _llm_deep_audit(self, text: str, intent: IntentType) -> ValidationResult:
-        """Call LLM for nuanced safety / quality audit."""
-        raise NotImplementedError("LLM deep audit not yet integrated")
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +191,7 @@ def _default_rules() -> list[ValidationRule]:
             name="not_too_short",
             min_length=2,
         ),
-        # 危险短语(粗筛;真正安全靠 LLM deep audit,3.x 不实现)
+        # 危险短语(粗筛;细筛由运行人员人工把关)
         ValidationRule(
             name="no_dangerous_phrase",
             pattern=r"(?i)\b(rm\s+-rf\s+/|drop\s+database|format\s+c:|del\s+/\*)\b",

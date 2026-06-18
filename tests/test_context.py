@@ -4,11 +4,12 @@
 - build_context() 基本构建
 - compose_sections() 分块组合
 - flatten_sections() 扁平化
+- build_context_detailed() 详细版
 """
 
 from __future__ import annotations
 
-import pytest
+import inspect
 
 
 class TestContextBasic:
@@ -36,14 +37,12 @@ class TestComposeSections:
     def test_compose_sections_signature(self):
         """验证 compose_sections 签名"""
         from mmi.core.context import compose_sections
-        import inspect
         sig = inspect.signature(compose_sections)
         assert len(sig.parameters) >= 3  # 至少3个参数
 
     def test_flatten_sections_signature(self):
         """验证 flatten_sections 签名"""
         from mmi.core.context import flatten_sections
-        import inspect
         sig = inspect.signature(flatten_sections)
         assert len(sig.parameters) >= 1
 
@@ -54,22 +53,18 @@ class TestBuildContext:
     def test_build_context_signature(self):
         """验证 build_context 签名"""
         from mmi.core.context import build_context
-        import inspect
         sig = inspect.signature(build_context)
         assert len(sig.parameters) >= 3  # 至少3个参数
 
-    def test_build_context_detailed_if_available(self):
-        """验证 build_context_detailed 如果存在"""
-        try:
-            from mmi.core.context import build_context_detailed
-            assert callable(build_context_detailed)
-        except ImportError:
-            pytest.skip("build_context_detailed not available")
+    def test_build_context_detailed_is_exposed(self):
+        """P9.5 修复:build_context_detailed 已在 mmi/core/__init__.py:9 导出,
+        旧测试 try/except + pytest.skip 完全是死代码 —— test_loader.py 与
+        test_memory.py 都直接调用它,确认存在。"""
+        from mmi.core.context import build_context_detailed
+        assert callable(build_context_detailed)
 
     def test_context_module_has_core_functions(self):
         """验证 context 模块包含核心函数"""
         from mmi.core import context
-        # 检查核心函数是否存在
         assert hasattr(context, 'build_context')
-        # build_context_detailed 可能不存在，使用 hasattr 检查
-        # 不强制要求，因为这是内部函数
+        assert hasattr(context, 'build_context_detailed')
