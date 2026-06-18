@@ -196,7 +196,7 @@ def test_stream_retry_exhausts_default_max_attempts_3():
 def test_stream_retry_uses_exponential_backoff(monkeypatch):
     """退避时序同 chat_with_retry:attempt N 退 base_delay * 2^(N-1)。"""
     sleep_calls: list[float] = []
-    monkeypatch.setattr("mmi.core.llm.time.sleep", lambda s: sleep_calls.append(s))
+    monkeypatch.setattr("mmi.core.llm.base.time.sleep", lambda s: sleep_calls.append(s))
 
     p = _ScriptedStreamLLM([
         [httpx.ConnectError("x")],  # 第 1 次

@@ -69,9 +69,9 @@ def memory_store(session_id: str, body: str, summary: str = "") -> str:
 def memory_search(query: str, limit: int = 5) -> str:
     """Search memory entries."""
     try:
-        from mmi.core.memory import search
+        from mmi.core.memory import search_semantic
 
-        results = search(query, k=limit)
+        results = search_semantic(query, top_k=limit)
         if not results:
             return "No matching memory entries found."
         lines = [f"Found {len(results)} results:"]

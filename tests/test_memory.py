@@ -696,13 +696,13 @@ def test_faiss_pool_lazy_loads_on_first_store(isolated_home, fast_embedder):
 def test_faiss_pool_does_not_flush_below_threshold(isolated_home, fast_embedder, tmp_path, monkeypatch):
     """P2-10:FLUSH_THRESHOLD=50 之前不写盘,只是 dirty 累加。"""
     from mmi.core import memory
-    # 用 monkeypatch 监控写盘
+    # 用 monkeypatch 监控写盘(patch 子模块才能被 faiss 内部 flush 调到)
     save_count = {"n": 0}
-    orig_save = memory._save_faiss_index
+    orig_save = memory.faiss._save_faiss_index
     def counting_save(idx):
         save_count["n"] += 1
         orig_save(idx)
-    monkeypatch.setattr(memory, "_save_faiss_index", counting_save)
+    monkeypatch.setattr(memory.faiss, "_save_faiss_index", counting_save)
 
     # 30 条(低于 50 阈值)
     for i in range(30):
@@ -722,11 +722,11 @@ def test_faiss_pool_flushes_at_threshold(isolated_home, fast_embedder, monkeypat
     """50 条入库应触发自动 flush。"""
     from mmi.core import memory
     save_count = {"n": 0}
-    orig_save = memory._save_faiss_index
+    orig_save = memory.faiss._save_faiss_index
     def counting_save(idx):
         save_count["n"] += 1
         orig_save(idx)
-    monkeypatch.setattr(memory, "_save_faiss_index", counting_save)
+    monkeypatch.setattr(memory.faiss, "_save_faiss_index", counting_save)
 
     for i in range(51):  # 跨越 50 阈值
         memory.store_memory(f"s{i}", f"## topic {i}\nbody {i}", embedder=fast_embedder)
@@ -742,10 +742,10 @@ def test_faiss_pool_persists_across_reload(isolated_home, fast_embedder, tmp_pat
         memory.store_memory(f"s{i}", f"## t{i}\nc{i}", embedder=fast_embedder)
     memory.flush_faiss()
 
-    # 模拟"重置"清内存池,触发 lazy reload
-    monkeypatch.setattr(memory, "_INMEM_INDEX", None)
-    monkeypatch.setattr(memory, "_INMEM_IDS", [])
-    monkeypatch.setattr(memory, "_INMEM_LOADED", False)
+    # 模拟"重置"清内存池,触发 lazy reload(patch faiss 子模块,store.py 走 _faiss_mod._INMEM_* 读最新)
+    monkeypatch.setattr(memory.faiss, "_INMEM_INDEX", None)
+    monkeypatch.setattr(memory.faiss, "_INMEM_IDS", [])
+    monkeypatch.setattr(memory.faiss, "_INMEM_LOADED", False)
     # 不动磁盘 → 应该 reload 到同样的 5 条
     memory._ensure_loaded(fast_embedder.dim)
     assert len(memory._INMEM_IDS) == 5

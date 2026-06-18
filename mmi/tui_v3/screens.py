@@ -1,37 +1,27 @@
-"""mmi.tui_v3 — MMI Textual-based TUI (consolidated v3).
+"""mmi.tui_v3.screens —— 5 个 Screen + count_tokens 工具。
 
-Port of GA's tui_v3 architecture, adapted for mmi's SessionManager.
-Run: mmi tui-python  or  python -m mmi.tui_v3
-
-P2-2: 修复流式内容持久化、清理未使用变量、增加 /delete 和 /export 命令。
-Bugfix: 回车进入历史会话、自动滚动、斜杠命令补全。
+依赖项:_bridge, _messages, mmi.core.config, mmi.core.i18n。
+被依赖:_app (push_screen)。
 """
 
 from __future__ import annotations
 
-import contextlib
-import logging
 import os
-import re
-import sys
-from collections.abc import Iterator
 
 from rich.markdown import Markdown
 from rich.text import Text
 from textual import work
-from textual.app import App, ComposeResult
+from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
-from textual.message import Message
 from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Input, Label, ListItem, ListView, RichLog, Static
 
 from mmi.core import config as cfg_module
 from mmi.core.i18n import t as _t
-from mmi.core.manager import SessionManager
 from mmi.core.session import SessionMeta
-
-logger = logging.getLogger(__name__)
+from mmi.tui_v3._bridge import ManagerBridge
+from mmi.tui_v3._messages import StreamChunk, StreamDone
 
 # ---------------------------------------------------------------------------
 # Token counting utility
@@ -51,54 +41,7 @@ def count_tokens(text: str) -> int:
     return len(text) if text else 0
 
 
-# ---------------------------------------------------------------------------
-# ManagerBridge
-# ---------------------------------------------------------------------------
-
-class ManagerBridge:
-    """Thin wrapper around SessionManager for TUI use."""
-
-    def __init__(self) -> None:
-        self.mgr = SessionManager()
-
-    def list_sessions(self, limit: int = 100) -> list[SessionMeta]:
-        return self.mgr.list_sessions(limit=limit)
-
-    def create_session(self, title: str = "untitled") -> str:
-        return self.mgr.create(title=title)
-
-    def get_session_body(self, sid: str) -> str:
-        try:
-            s = self.mgr.get(sid)
-            return s.body if s else ""
-        except Exception:
-            return ""
-
-    def delete_session(self, session_id: str) -> None:
-        with contextlib.suppress(Exception):
-            self.mgr.delete(session_id)
-
-    def stream_chat(self, session_id: str, user_input: str) -> Iterator[str]:
-        yield from self.mgr.stream_chat(session_id, user_input)
-
-    def search(self, query: str) -> list[SessionMeta]:
-        return self.mgr.search(query)
-
-# ---------------------------------------------------------------------------
-# Stream Messages
-# ---------------------------------------------------------------------------
-
-class StreamChunk(Message):
-    def __init__(self, chunk: str) -> None:
-        super().__init__()
-        self.chunk = chunk
-
-class StreamDone(Message):
-    def __init__(self, reply: str) -> None:
-        super().__init__()
-        self.reply = reply
-
-# 命令列表常量
+# 命令列表常量(给 ChatScreen._show_completions 用)
 _COMMANDS: dict[str, str] = {
     "quit": "退出程序",
     "back": "返回上一页",
@@ -109,11 +52,13 @@ _COMMANDS: dict[str, str] = {
     "help": "显示帮助",
 }
 
+
 # ---------------------------------------------------------------------------
 # Session List Screen
 # ---------------------------------------------------------------------------
 
 LIST_TITLE = _t('tui.list.title', default='会话列表')
+
 
 class SessionListScreen(Screen[None]):
     """Main screen showing session list."""
@@ -229,9 +174,11 @@ class SessionListScreen(Screen[None]):
         elif cmd in ("refresh", "r"):
             self._load()
 
+
 # ---------------------------------------------------------------------------
 # Chat Screen
 # ---------------------------------------------------------------------------
+
 
 class ChatScreen(Screen[None]):
     """Chat conversation screen with streaming."""
@@ -485,9 +432,11 @@ class ChatScreen(Screen[None]):
         except Exception:
             pass
 
+
 # ---------------------------------------------------------------------------
 # New Session Modal
 # ---------------------------------------------------------------------------
+
 
 class NewSessionScreen(ModalScreen[str]):
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
@@ -532,9 +481,11 @@ class NewSessionScreen(ModalScreen[str]):
     def action_cancel(self) -> None:
         self.dismiss(None)
 
+
 # ---------------------------------------------------------------------------
 # Search Modal
 # ---------------------------------------------------------------------------
+
 
 class SearchScreen(ModalScreen[str]):
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
@@ -579,9 +530,11 @@ class SearchScreen(ModalScreen[str]):
     def action_cancel(self) -> None:
         self.dismiss(None)
 
+
 # ---------------------------------------------------------------------------
 # Command Modal
 # ---------------------------------------------------------------------------
+
 
 class CommandScreen(ModalScreen[str]):
     BINDINGS = [Binding("escape", "cancel", "Cancel")]
@@ -629,182 +582,10 @@ class CommandScreen(ModalScreen[str]):
         label = event.item.children[0]
         if isinstance(label, Static):
             text = str(label.render())
-            m = re.search(r"/(\w+)", text)
+            import re as _re
+            m = _re.search(r"/(\w+)", text)
             if m:
                 self.dismiss(f"/{m.group(1)}")
 
     def action_cancel(self) -> None:
         self.dismiss(None)
-
-# ---------------------------------------------------------------------------
-# Main App
-# ---------------------------------------------------------------------------
-
-class MmiTui(App[None]):
-    """MMI TUI v3 — Main Application."""
-
-    TITLE = "MMI TUI v3"
-    SUB_TITLE = "v0.1.0"
-
-    CSS = """
-    Screen {
-        background: #1a1b26;
-        color: #c0caf5;
-    }
-
-    #tui-titlebar, #tui-chat-titlebar {
-        height: 2;
-        background: #0f0f17;
-        color: #7aa2f7;
-        text-align: center;
-        text-style: bold;
-        border-bottom: solid #2a2b3e;
-    }
-
-    #tui-list-info {
-        height: 1;
-        background: #1a1b26;
-        color: #565f89;
-        text-align: center;
-    }
-
-    #tui-session-list {
-        height: 1fr;
-        border: none;
-    }
-
-    ListView {
-        background: #1a1b26;
-    }
-
-    ListItem {
-        padding: 0 1;
-    }
-
-    ListItem > Static {
-        color: #c0caf5;
-    }
-
-    ListItem:hover, ListItem:focus {
-        background: #2a2b3e;
-    }
-
-    #tui-footer, #tui-chat-footer {
-        height: 1;
-        background: #0f0f17;
-        color: #565f89;
-        text-align: center;
-    }
-
-    #tui-chat-log {
-        height: 1fr;
-        background: #1a1b26;
-        color: #c0caf5;
-        border: none;
-        padding: 0 1;
-        overflow-y: scroll;
-    }
-
-    /* Bug #3 FIX: 命令补全提示区域 */
-    #tui-completions {
-        height: auto;
-        max-height: 8;
-        background: #16161e;
-        color: #a9b1d6;
-        border: solid #2a2b3e;
-        padding: 0 1;
-        overflow-y: auto;
-    }
-    #tui-completions.completions-hidden {
-        display: none;
-    }
-    #tui-completions.completions-visible {
-        display: block;
-    }
-
-    #tui-chat-input {
-        height: 3;
-        background: #0f0f17;
-        color: #c0caf5;
-        border: solid #2a2b3e;
-    }
-
-    #tui-chat-input:focus {
-        border: solid #7aa2f7;
-    }
-
-    #new-session-dialog, #search-dialog, #cmd-dialog {
-        width: 50;
-        height: auto;
-        border: solid #7aa2f7;
-        background: #1a1b26;
-        padding: 1 2;
-        margin: 4 8;
-    }
-
-    #new-session-title, #search-title, #cmd-title {
-        text-style: bold;
-        color: #7aa2f7;
-        padding-bottom: 1;
-    }
-
-    #new-session-input, #search-input, #cmd-input {
-        background: #0f0f17;
-        color: #c0caf5;
-        border: solid #2a2b3e;
-    }
-
-    #new-session-input:focus, #search-input:focus, #cmd-input:focus {
-        border: solid #7aa2f7;
-    }
-
-    #new-session-buttons {
-        height: auto;
-        align: center middle;
-        padding-top: 1;
-    }
-
-    Button {
-        background: #2a2b3e;
-        color: #c0caf5;
-        margin: 0 1;
-    }
-
-    Button:hover {
-        background: #7aa2f7;
-        color: #1a1b26;
-    }
-
-    #search-results, #cmd-results {
-        height: 12;
-        border: none;
-    }
-
-    .empty-msg {
-        color: #565f89;
-        text-align: center;
-        padding: 2;
-    }
-    """
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.bridge = ManagerBridge()
-
-    def on_mount(self) -> None:
-        self.push_screen(SessionListScreen())
-
-def run_tui() -> int:
-    """Entry point: run the TUI."""
-    app = MmiTui()
-    try:
-        app.run()
-    except KeyboardInterrupt:
-        pass
-    except Exception as e:
-        print(f"[tui_v3] Error: {e}", file=sys.stderr)
-        return 1
-    return 0
-
-if __name__ == "__main__":
-    raise SystemExit(run_tui())

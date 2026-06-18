@@ -41,7 +41,7 @@ def _retry(llm, messages, **kw):
 def test_retry_on_timeout_then_success():
     timeout = httpx.TimeoutException("timeout")
     llm = _FakeLLM([timeout, "ok"])
-    with patch("mmi.core.llm.time.sleep") as mock_sleep:
+    with patch("mmi.core.llm.base.time.sleep") as mock_sleep:
         result = _retry(llm, [{"role": "user", "content": "hi"}])
     assert result.reply == "ok"
     assert result.attempts == 2
@@ -57,7 +57,7 @@ def test_retry_on_5xx_then_success():
     resp = httpx.Response(503, request=req)
     err5xx = httpx.HTTPStatusError("503", request=req, response=resp)
     llm = _FakeLLM([err5xx, "ok"])
-    with patch("mmi.core.llm.time.sleep"):
+    with patch("mmi.core.llm.base.time.sleep"):
         result = _retry(llm, [])
     assert result.attempts == 2
     assert result.reply == "ok"
@@ -68,7 +68,7 @@ def test_retry_on_429_too_many_requests():
     resp = httpx.Response(429, request=req)
     err429 = httpx.HTTPStatusError("429", request=req, response=resp)
     llm = _FakeLLM([err429, "ok"])
-    with patch("mmi.core.llm.time.sleep"):
+    with patch("mmi.core.llm.base.time.sleep"):
         result = _retry(llm, [])
     assert result.attempts == 2
 
@@ -86,7 +86,7 @@ def test_no_retry_on_4xx():
 def test_retry_exhausted_raises():
     timeout = httpx.TimeoutException("timeout")
     llm = _FakeLLM([timeout, timeout, timeout])
-    with patch("mmi.core.llm.time.sleep"):
+    with patch("mmi.core.llm.base.time.sleep"):
         with pytest.raises(LLMRetryExhausted) as ei:
             _retry(llm, [])
     assert ei.value.attempts == 3
@@ -97,7 +97,7 @@ def test_retry_backoff_timing():
     timeout = httpx.TimeoutException("timeout")
     llm = _FakeLLM([timeout, timeout, "ok"])
     sleeps: list[float] = []
-    with patch("mmi.core.llm.time.sleep", side_effect=lambda s: sleeps.append(s)):
+    with patch("mmi.core.llm.base.time.sleep", side_effect=lambda s: sleeps.append(s)):
         result = _retry(llm, [])
     assert sleeps == [0.5, 1.0]  # 第 3 次成功前退避 0.5+1.0
     assert result.attempts == 3
