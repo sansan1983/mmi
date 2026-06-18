@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import Counter
 
 from mmi.cli import ensure_mmi_home
-from mmi.core import storage
+from mmi.core import i18n, storage
 
 
 def cmd_stat(args, mgr) -> int:
@@ -20,12 +20,12 @@ def cmd_stat(args, mgr) -> int:
         if storage.session_path(sid).exists()
     )
     total = len(all_meta)
-    print("MMI Statistics")
-    print(f"  active:    {total:4d}")
+    print(i18n.t("stat.title"))
+    print(i18n.t("stat.active", n=total))
     for state in ["active", "warm", "cold", "zombie"]:
         cnt = state_counts.get(state, 0)
         pct = cnt / total * 100 if total else 0
-        print(f"    {state}: {cnt:4d} ({pct:.1f}%)")
-    print(f"  trash:     {len(trash_sids):4d}")
-    print(f"  total size: {total_size / 1024 / 1024:.2f} MB")
+        print(i18n.t("stat.state", state=state, count=cnt, pct=pct))
+    print(i18n.t("stat.trash", n=len(trash_sids)))
+    print(i18n.t("stat.total_size", size=total_size / 1024 / 1024))
     return 0

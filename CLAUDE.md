@@ -10,11 +10,11 @@
 
 | 项目 | 内容 |
 |------|------|
-| **当前阶段** | Phase 2 进行中（Phase 0+1 质量修复完成） |
-| **最近完成** | Phase 0+1 全部完成 + 质量门禁修复 = **7 commits 今日** |
-| **下次动作** | 继续 Phase 2 剩余任务：跨会话记忆、多会话聚合 |
-| **代码质量** | ruff 0 errors ✅, pytest 719 pass ✅, 原子写 ✅, pyproject.toml ruff配置 ✅ |
-| **Git 提交** | 7 commits pushed to master ✅ |
+| **当前阶段** | Phase 5 完成（铁律违反项全部清理） |
+| **最近完成** | P5：i18n 化 `config.py` wizard 32 处 + show 3 处 + 辅助 2 处 = 38 词条。新增 `wizard.*` 36 词条（banner/标题/错误/提示/双协议/单协议/api_key/拉模型/写盘/confirm suffix）和 `config_show.*` 2 词条。format spec 保留（`{provider!r}` repr / `{k:10s}` 宽度） |
+| **下次动作** | commit 收口（建议先 commit 防止 working tree 漂移，18 commit 分 4-6 个语义化 commit 提）。P6 候选：LLM 提示词 i18n 化 7 个模板；17 个 `cmd_*(args, mgr) -> int` 加 `args: object, mgr: SessionManager` 类型标注 |
+| **代码质量** | ruff 0 errors ✅, pytest 690 pass ✅, 原子写 ✅, 单例线程安全 ✅, 时间工具统一 ✅, 子命令 dispatch 统一 ✅, 主入口 dispatch 字典化 ✅, chat pipeline 统一 ✅, llm 包化 ✅, memory 包化 ✅, tui_v3 包化 ✅, cmd_*.py i18n 化（13 文件,~120 处）✅ |
+| **Git 提交** | P0+P1+P2-1~5+P3-A+B+C+D+E+P4+P5 改动 **未提交** |
 
 **已完成的 Phase 概览**：
 
@@ -28,9 +28,18 @@
 
 | 日期 | 动作 | 产出 |
 |------|------|------|
-| 2026-06-17 | Phase 0+1 全部完成 + 质量门禁全修复（ruff 270+ auto-fix + _INMEM_DIRTY bug + 原子写） | 7 commits (b0e3c26, 2a8c1d0, afd36cb, cc1e113, 9163869, ae63894, 871b593) |
-| 2026-06-16 | 文档全盘整理 + 路线图 v2.0 | `docs/ROADMAP/DEVELOPMENT_ROADMAP.md` |
-| 2026-06-16 | 项目根目录清理 | 删除 8 个无关目录/文件 |
+| 2026-06-18 | P5：i18n 化 `config.py` wizard 32 处 + show 3 处 | 38 词条（`wizard.*` 36 + `config_show.*` 2），含 banner/标题/错误/提示/双协议/单协议/api_key/拉模型/写盘/confirm suffix。format spec 保留（`{provider!r}` repr + `{k:10s}` 宽度）。完成铁律违反项全部清理 |
+| 2026-06-18 | P4：i18n 化 12 个 cmd_*.py 硬编码 | 3 批完成。批 1（6 文件：memory/skill/stat/list/update/rename）~30 处；批 2（4 文件：info/inspect/agent/export）~45 处；批 3（2 文件：gc/chat inspect 模式）~19 处。补 70+ 词条到 `zh-CN.json`/`en-US.json`。跳过 `config.py` wizard 32 处（P5） |
+| 2026-06-18 | P3-E：拆 `tui_v3.py` 810 行 → `tui_v3/` 包 | 5 子模块（872 行总和）+ `__init__.py` 45 行 re-export。依赖方向：`_bridge`(40) + `_messages`(18) → `screens`(586) → `_app`(183)。零 test 改动（外部只引用 `run_tui`） |
+| 2026-06-18 | P3-D：拆 `core/memory.py` 978 行 → `core/memory/` 包 | 9 子模块（总 1033 行）+ `__init__.py` 155 行（PEP 562 `__getattr__` 转发）。store.py 改用 `_faiss_mod` 模块引用（避免 clear_memories 后 stale binding）。3 test monkeypatch 改 `memory.faiss._XXX`。顺手修 `memory_tools.py:72` 死代码（`from memory import search` 不存在） |
+| 2026-06-18 | P3-C：拆 `core/llm.py` 903 行 → `core/llm/` 包 | 7 子模块: `_types`(20行) / `base`(221行) / `echo`(47行) / `openai`(157行) / `anthropic`(257行) / `factory`(112行) / `ipc_stub`(17行) + `__init__.py` re-export(50行)。test mock 路径 6 处从 `mmi.core.llm.time.sleep` 改 `mmi.core.llm.base.time.sleep` |
+| 2026-06-18 | P3-B：`manager.chat`+`stream_chat` 抽 `_post_chat_pipeline` | 净 -19 行（+65/-84），顺手修复 `stream_chat` trashed 时丢 `trashed_reason` 的 bug（helper 给两者都填了 reason） |
+| 2026-06-18 | P3-A：`cli/main.py::_dispatch` 70 行 elif 改 dict 查表 | 净 -27 行（+39/-66），`_COMMANDS` 字典（18 子命令）+ `_load_command` 懒加载 helper |
+| 2026-06-18 | P2 步骤 5：`dispatch_subcommand` helper 统一 4 处子命令 | `memory/agent/config/skill` 改 `dispatch_subcommand` 字典查表（每处提 `_do_X` 内部 helper）；helper 在 `cli/__init__.py`；不瘦身（+77 行）但统一抽象 |
+| 2026-06-18 | P2 步骤 4：抽 `core/_time.py` 统一时间工具 | 删 `heat.py` 的 `parse_iso_utc` + `_format_iso_utc`（28 行）；`session.utcnow_iso` 改包装（5 行）；删 `gc.py` 死代码 `parse_iso_utc`（11 行） |
+| 2026-06-18 | P2 步骤 3：抽 `Singleton` 基类(DCL)统一 6 处 | 新建 `core/_patterns.py`（46 行 DCL 基类）；`agent/{skill,tools,trace}` + `core/{evaluation,mcp_server,gc_daemon,provider_registry}` 改基类继承；净 -71 行 |
+| 2026-06-18 | P2 步骤 2：抽 `atomic_modify_session` + 公开 `atomic_write` | `update_access`/`append_turn` 走 helper；`config.toml`/`skill`/`export` 从非原子改原子写 |
+| 2026-06-18 | P2 步骤 1：`require_session` helper 抽取 | 7 CLI 命令去重，-20 行；新增 `cli.unknown_session` i18n；修 `inspect.py` 宽 except |
 
 ---
 

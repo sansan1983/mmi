@@ -4,20 +4,15 @@ from __future__ import annotations
 
 import sys
 
-from mmi.cli import ensure_mmi_home
-from mmi.core import storage
+from mmi.cli import ensure_mmi_home, require_session
+from mmi.core import i18n, storage
 
 
 def cmd_rename(args, mgr) -> int:
     ensure_mmi_home()
-    try:
-        sess = storage.read_session(args.session_id)
-    except storage.SessionNotFound:
-        print(f"session not found: {args.session_id}", file=sys.stderr)
-        return 2
-    except ValueError as e:
-        print(f"{e}", file=sys.stderr)
-        return 1
+    sess, code = require_session(args.session_id, mgr, code=2)
+    if code:
+        return code
 
     # Check duplicate title unless --force
     if not args.force:
@@ -28,10 +23,10 @@ def cmd_rename(args, mgr) -> int:
                 other = storage.read_session(sid)
                 if other.meta.title == args.title:
                     print(
-                        f"title already in use: '{args.title}' (session: {other.meta.session_id})",
+                        i18n.t("rename.dup", title=args.title, session_id=other.session_id),
                         file=sys.stderr,
                     )
-                    print("use --force to override", file=sys.stderr)
+                    print(i18n.t("rename.dup_hint"), file=sys.stderr)
                     return 1
             except Exception:
                 pass
@@ -39,5 +34,5 @@ def cmd_rename(args, mgr) -> int:
     old_title = sess.meta.title
     sess.meta.title = args.title
     storage.write_session(sess)
-    print(f"renamed: '{old_title}' → '{args.title}'")
+    print(i18n.t("rename.success", old=old_title, new=args.title))
     return 0

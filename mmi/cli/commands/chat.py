@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import sys
-
-from mmi.cli import ensure_mmi_home
+from mmi.cli import ensure_mmi_home, require_session
 from mmi.core import i18n, storage
 
 
@@ -12,21 +10,14 @@ def cmd_chat(args, mgr) -> int:
     ensure_mmi_home()
     sid = args.session_id
 
-    try:
-        mgr.get(sid)
-    except storage.SessionNotFound:
-        print(i18n.t("chat.unknown_session", session_id=sid), file=sys.stderr)
-        return 1
+    _, code = require_session(sid, mgr, err_key="chat.unknown_session")
+    if code:
+        return code
 
     # --inspect mode: preview prompt before entering loop
     if args.inspect:
         from mmi.core import context as _loader
 
-        try:
-            mgr.get(sid)
-        except Exception:
-            print(f"session not found: {sid}", file=sys.stderr)
-            return 1
         meta = storage.read_meta(sid)
         config = _loader.LoaderConfig()
         ctx = _loader.build_context_detailed(sid, "", config)
@@ -34,25 +25,25 @@ def cmd_chat(args, mgr) -> int:
         sys_msg = next((m for m in messages if m.get("role") == "system"), {})
         sys_content = sys_msg.get("content", "") or ""
         print("=" * 60)
-        print(f"mmi chat --inspect  |  session={sid}")
+        print(i18n.t("chat.inspect.banner", sid=sid))
         print("=" * 60)
-        print(f"  title          : {meta.title}")
-        print(f"  state          : {meta.state}")
-        print(f"  recent_turns   : {len(ctx.recent_turns)} pairs")
-        print(f"  hit_paragraphs : {len(ctx.hit_turns)} kept")
-        print(f"  token_limit    : {config.max_tokens}")
-        print(f"  tokens used    : {ctx.estimated_tokens} ({ctx.estimated_tokens/config.max_tokens*100:.1f}%)")
+        print(i18n.t("chat.inspect.title", title=meta.title))
+        print(i18n.t("chat.inspect.state", state=meta.state))
+        print(i18n.t("chat.inspect.recent_turns", n=len(ctx.recent_turns)))
+        print(i18n.t("chat.inspect.hit_paragraphs", n=len(ctx.hit_turns)))
+        print(i18n.t("chat.inspect.token_limit", n=config.max_tokens))
+        print(i18n.t("chat.inspect.tokens_used", used=ctx.estimated_tokens, pct=ctx.estimated_tokens / config.max_tokens * 100))
         print()
-        print("[system prompt]")
-        print(f"  {len(sys_content)} chars  |  {_loader.estimate_tokens([sys_msg])} tokens")
-        print(f"  {sys_content[:200]}")
+        print(i18n.t("chat.inspect.system_prompt_label"))
+        print(i18n.t("chat.inspect.system_prompt_stats", chars=len(sys_content), tokens=_loader.estimate_tokens([sys_msg])))
+        print(i18n.t("chat.inspect.system_prompt_content", content=sys_content[:200]))
         print()
         if ctx.estimated_tokens > config.max_tokens * 0.8:
-            print(f"  [WARN] Within {int(config.max_tokens*0.8)} tokens (80%), consider compacting")
+            print(i18n.t("chat.inspect.warn_80pct", n=int(config.max_tokens * 0.8)))
         else:
-            print(f"  [OK] {config.max_tokens - ctx.estimated_tokens} tokens headroom")
+            print(i18n.t("chat.inspect.ok_headroom", n=config.max_tokens - ctx.estimated_tokens))
         print()
-        print(f"Use 'mmi chat {sid}' to start the conversation loop")
+        print(i18n.t("chat.inspect.hint", sid=sid))
         return 0
 
     print(i18n.t("chat.welcome", session_id=sid))

@@ -3,23 +3,17 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
-from mmi.cli import ensure_mmi_home
-from mmi.core import storage
+from mmi.cli import ensure_mmi_home, require_session
+from mmi.core import i18n
 
 
 def cmd_export(args, mgr) -> int:
     ensure_mmi_home()
-    try:
-        sess = storage.read_session(args.session_id)
-    except storage.SessionNotFound:
-        print(f"session not found: {args.session_id}", file=sys.stderr)
-        return 1
-    except ValueError as e:
-        print(f"{e}", file=sys.stderr)
-        return 1
+    sess, code = require_session(args.session_id, mgr)
+    if code:
+        return code
     meta = sess.meta
 
     data = {
@@ -49,11 +43,13 @@ def cmd_export(args, mgr) -> int:
             continue
         data["turns"].append({"role": role, "content": content})
 
+    from mmi.core.storage import atomic_write
+
     output = args.output
     if args.format == "json" or output.endswith(".json"):
         indent = None if args.compact else 2
         content_out = json.dumps(data, indent=indent, ensure_ascii=False)
-        Path(output).write_text(content_out, encoding="utf-8")
+        atomic_write(Path(output), content_out)
     else:
         lines_md = [
             f"# {meta.title or 'Untitled Session'}",
@@ -66,7 +62,7 @@ def cmd_export(args, mgr) -> int:
             lines_md.append(f"## {t['role'].capitalize()}")
             lines_md.append(t["content"])
             lines_md.append("")
-        Path(output).write_text("\n".join(lines_md), encoding="utf-8")
+        atomic_write(Path(output), "\n".join(lines_md))
 
-    print(f"exported {len(data['turns'])} turns to {output}")
+    print(i18n.t("export.success", turns=len(data['turns']), output=output))
     return 0

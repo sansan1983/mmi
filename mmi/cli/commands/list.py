@@ -16,7 +16,7 @@ def cmd_list(args, mgr) -> int:
         return 0
     print(i18n.t("list.title"))
     if args.state != "all":
-        print(f"  [filter: state={args.state}]")
+        print(i18n.t("list.filter", state=args.state))
     for i, s in enumerate(sessions, 1):
         if s.title:
             print(i18n.t("list.entry", index=i, title=s.title, heat=s.heat, state=s.state))

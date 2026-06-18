@@ -24,7 +24,7 @@ def cmd_gc(args, mgr) -> int:
     ttl = args.ttl_days
 
     print(i18n.t("gc.title"))
-    print(f"  ttl={ttl}d  mode={mode}  dry-run={args.dry_run}")
+    print(i18n.t("gc.config", ttl=ttl, mode=mode, dry_run=args.dry_run))
     print()
 
     if mode == "all":
@@ -47,19 +47,19 @@ def cmd_gc(args, mgr) -> int:
     if cold_ents:
         kept = sum(1 for e in cold_ents if not getattr(e, "deleted", False))
         moved = sum(1 for e in cold_ents if getattr(e, "deleted", False))
-        print(f"\n  [cold] {len(cold_ents)} total  kept={kept}  moved->trash={moved}")
+        print(i18n.t("gc.cold_group", total=len(cold_ents), kept=kept, moved=moved))
         for e in cold_ents:
             print(_fmt_entry(e))
 
     zombie_ents = report.zombie_entries
     if zombie_ents:
-        print(f"\n  [zombie] {len(zombie_ents)} total")
+        print(i18n.t("gc.zombie_group", total=len(zombie_ents)))
         for e in zombie_ents:
             print(_fmt_entry(e))
 
     trash_ents = report.trash_entries
     if trash_ents:
-        print(f"\n  [trash] {len(trash_ents)} total")
+        print(i18n.t("gc.trash_group", total=len(trash_ents)))
         for e in trash_ents:
             print(_fmt_entry(e))
 
