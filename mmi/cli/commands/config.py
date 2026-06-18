@@ -100,8 +100,8 @@ def _config_wizard(args: Namespace) -> int:
         )
 
     if chosen_idx == custom_idx:
-        base_url = _prompt_text("自定义 base_url", default=current.get("base_url", ""))
-        style_raw = _prompt_text("API 风格 (openai/anthropic)", default="openai").lower()
+        base_url = _prompt_text(i18n.t("wizard.custom_base_url_prompt"), default=current.get("base_url", ""))
+        style_raw = _prompt_text(i18n.t("wizard.api_style_prompt"), default="openai").lower()
         if style_raw not in ("openai", "anthropic"):
             print(i18n.t("wizard.invalid_style"))
             return 1
@@ -136,7 +136,7 @@ def _config_wizard(args: Namespace) -> int:
     if getattr(args, "api_key", None):
         api_key = args.api_key.strip()
     else:
-        env_hint = provider.api_key_env or "(无)"
+        env_hint = provider.api_key_env or i18n.t("wizard.no_env_hint")
         print(i18n.t("wizard.api_key_url_hint", url=provider.api_key_url or '?'))
         print(i18n.t("wizard.api_key_env_hint", env=env_hint))
         api_key = _prompt_text(i18n.t("wizard.api_key_prompt"), required=True)

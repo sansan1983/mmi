@@ -10,11 +10,11 @@
 
 | 项目 | 内容 |
 |------|------|
-| **当前阶段** | Phase 7 完成（chat.py inspect 模式抽 helper） |
-| **最近完成** | P7：抽 `chat.py` 的 `--inspect` 模式 30 行诊断输出为私有 helper `_chat_inspect(sid, lang) -> int`。**Surgical 原则**：保留在 chat.py 内（无第二调用方，不污染 `cli/__init__.py`）；保留 `from mmi.core import context as _loader` 的 import 模式（cmd_chat 不需要，避免环依赖） |
-| **下次动作** | P8 候选：i18n 化 7 个 LLM 提示词模板（`audit/classifier/llm/titler/summarizer/memory`）；或 P7 收尾 commit |
-| **代码质量** | ruff 0 errors ✅, pytest 690 pass ✅, 原子写 ✅, 单例线程安全 ✅, 时间工具统一 ✅, 子命令 dispatch 统一 ✅, 主入口 dispatch 字典化 ✅, chat pipeline 统一 ✅, llm 包化 ✅, memory 包化 ✅, tui_v3 包化 ✅, cmd_*.py i18n 化（13 文件,~120 处）✅, cmd_*.py 类型标注（18 公共 + 8 内部 + 2 dispatch）✅, chat inspect 抽 helper（-29 行）✅ |
-| **Git 提交** | P0+P1+P2-1~5+P3-A+B+C+D+E+P4+P5+P6 改动 **已提交**（commit 1-5）；P7 改动 **未提交** |
+| **当前阶段** | Phase 8 完成（config.py wizard 残留 i18n 化） |
+| **最近完成** | P8：i18n 化 `config.py` wizard 最后 3 处硬编码（`"自定义 base_url"` / `"API 风格 (openai/anthropic)"` / `"(无)"`），补 3 词条到 `zh-CN.json`/`en-US.json`。**config.py wizard 全部 i18n 化完成**（32 处 prompt + 3 处 show + 2 处辅助 + 3 处残留 = 40 处） |
+| **下次动作** | 无（本次重构任务完成） |
+| **代码质量** | ruff 0 errors ✅, pytest 690 pass ✅, 原子写 ✅, 单例线程安全 ✅, 时间工具统一 ✅, 子命令 dispatch 统一 ✅, 主入口 dispatch 字典化 ✅, chat pipeline 统一 ✅, llm 包化 ✅, memory 包化 ✅, tui_v3 包化 ✅, cmd_*.py i18n 化（13 文件,~120 处）✅, cmd_*.py 类型标注（18 公共 + 8 内部 + 2 dispatch）✅, chat inspect 抽 helper（-29 行）✅, config.py wizard 全部 i18n 化（40 处）✅ |
+| **Git 提交** | P0+P1+P2-1~5+P3-A+B+C+D+E+P4+P5+P6+P7 改动 **已提交**（commit 1-6）；P8 改动 **未提交** |
 
 **已完成的 Phase 概览**：
 
@@ -28,6 +28,7 @@
 
 | 日期 | 动作 | 产出 |
 |------|------|------|
+| 2026-06-18 | P8：i18n 化 config.py wizard 最后 3 处硬编码 | 3 词条（`wizard.custom_base_url_prompt`/`wizard.api_style_prompt`/`wizard.no_env_hint`）+ 3 处 `_prompt_text()` 调用改 `i18n.t()`。config.py wizard 全部 i18n 化完成（40 处） |
 | 2026-06-18 | P7：抽 `chat.py` `--inspect` 模式为 `_chat_inspect(sid, lang) -> int` 私有 helper | chat.py -29 行（30 行内联 → 1 行 dispatch + 30 行 helper）；cmd_chat 主路径更清晰；保留 `from mmi.core import context as _loader` lazy import 模式 |
 | 2026-06-18 | P6：补全 cmd_*.py 公共 API 类型标注 | 18 个 `cmd_X(args: Namespace, mgr: SessionManager) -> int` + 8 个内部 helper（agent/memory/skill/config）+ `_dispatch`/`_load_command` 同样加。统一 `from argparse import Namespace` + `from mmi.core.manager import SessionManager` import 模式 |
 | 2026-06-18 | P5：i18n 化 `config.py` wizard 32 处 + show 3 处 | 38 词条（`wizard.*` 36 + `config_show.*` 2），含 banner/标题/错误/提示/双协议/单协议/api_key/拉模型/写盘/confirm suffix。format spec 保留（`{provider!r}` repr + `{k:10s}` 宽度） |

@@ -3,6 +3,7 @@
 > 完整历史日志。近期 3 条见 `CLAUDE.md` 顶部「近期日志」表。
 
 | 日期 | 动作 | 产出 |
+| 2026-06-18 | P8：i18n 化 config.py wizard 最后 3 处硬编码 | 3 词条 + 3 处 `_prompt_text()` 改 `i18n.t()`。config.py wizard 全部 i18n 化完成（40 处） |
 | 2026-06-18 | P7：抽 chat.py --inspect 模式为 _chat_inspect helper | chat.py -29 行（30 行内联 → 1 行 dispatch） |
 | 2026-06-18 | P6：补全 cmd_*.py 公共 API 类型标注 | 18 + 8 + 2 函数加 `args: Namespace, mgr: SessionManager` |
 | 2026-06-18 | P5：i18n 化 config.py wizard + show | 38 词条（wizard.* 36 + config_show.* 2） |
