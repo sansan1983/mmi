@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from mmi.agent.event_bus import bus as default_bus
 from mmi.agent.modes import ThinkingMode
@@ -150,13 +150,3 @@ class Orchestrator:
             return f"[Orchestrator error] {result.error}"
         return ""
 
-    # ------------------------------------------------------------------
-    # 3.x 兼容:暴露 _instantiate_agent 给外部 mock 场景(已无内调用)
-    # ------------------------------------------------------------------
-
-    def _instantiate_agent(self, agent_id: str) -> Any:
-        """从 registry 拿 agent 类,实例化(注入 llm + 共享组件)。
-
-        R7 4.2:内部流程已搬到 InstantiateStep;保留此方法仅为老测试/老调用点。
-        """
-        return self.registry.get(agent_id)

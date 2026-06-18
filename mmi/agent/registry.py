@@ -85,16 +85,6 @@ class AgentRegistry:
             raise ValueError(f"Agent already registered: {meta.agent_id!r}")
         self._agents[meta.agent_id] = (meta, agent_cls)
 
-    def register_instance(
-        self,
-        meta: AgentMeta,
-        agent: BaseAgent,
-    ) -> None:
-        """Register a pre-instantiated agent (singleton-like pattern)."""
-        if meta.agent_id in self._agents:
-            raise ValueError(f"Agent already registered: {meta.agent_id!r}")
-        self._agents[meta.agent_id] = (meta, type(agent))
-
     # ------------------------------------------------------------------
     # Lookup
     # ------------------------------------------------------------------
@@ -111,33 +101,21 @@ class AgentRegistry:
         构造时尝试常见签名 ``(llm=, skill_library=, tool_registry=)``;
         失败则无参构造 + setattr(子类签名不兼容时兜底)。
         """
-        from mmi.agent.tools import ToolRegistry
 
         agent_cls = self.match(agent_id)
         if agent_cls is None:
             return None
         llm = getattr(self, "_default_llm", None)
-        skill_library = getattr(self, "_default_skill_library", None)
-        tool_registry = ToolRegistry.get_instance()
         try:
-            return agent_cls(
-                llm=llm,
-                skill_library=skill_library,
-                tool_registry=tool_registry,
-            )
+            return agent_cls(llm=llm)
         except TypeError:
             try:
                 inst = agent_cls()
             except Exception:
                 return None
-            for attr, val in [
-                ("llm", llm),
-                ("skill_library", skill_library),
-                ("tool_registry", tool_registry),
-            ]:
-                if hasattr(inst, attr):
-                    with contextlib.suppress(Exception):
-                        setattr(inst, attr, val)
+            if hasattr(inst, "llm"):
+                with contextlib.suppress(Exception):
+                    inst.llm = llm
             return inst
 
     def set_default_llm(self, llm: object) -> None:
@@ -147,11 +125,6 @@ class AgentRegistry:
     def set_default_skill_library(self, skill_library: object) -> None:
         """R7 4.2 引入:让 .get() 构造时用这个 skill_library(由 Orchestrator 注入)。"""
         self._default_skill_library = skill_library
-
-    def get_meta(self, agent_id: str) -> AgentMeta | None:
-        """Return metadata for *agent_id*, or None if not found."""
-        entry = self._agents.get(agent_id)
-        return entry[0] if entry else None
 
     def list_all(self, tag: str | None = None) -> list[AgentMeta]:
         """Return all registered agent metadata.

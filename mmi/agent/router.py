@@ -11,7 +11,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from mmi.core.llm import LLMProvider
+    pass
 
 
 class IntentType(Enum):
@@ -65,23 +65,6 @@ class Router:
     Implements a lightweight classifier (keyword + length heuristic) and
     exposes a route() method that returns agent identifiers.
     """
-
-    __slots__ = ("_use_llm", "_llm")
-
-    def __init__(
-        self, use_llm: bool = True, llm: LLMProvider | None = None,
-    ) -> None:
-        """Configure the router.
-
-        Parameters
-        ----------
-        use_llm : bool
-            When True, ambiguous cases may delegate to LLM (3.x 暂不实现,保留 API)。
-        llm : LLMProvider, optional
-            LLM 实例(use_llm=True 时生效,3.x 阶段传不传都行)。
-        """
-        self._use_llm = use_llm
-        self._llm = llm
 
     def classify(self, user_message: str) -> IntentType:
         """Return the most likely IntentType for user_message。

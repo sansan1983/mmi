@@ -15,8 +15,7 @@ from mmi.core.llm import LLMError, LLMProvider
 
 if TYPE_CHECKING:
     from mmi.agent.modes import ThinkingMode
-    from mmi.agent.skill import SkillLibrary
-    from mmi.agent.tools import ToolDef, ToolRegistry
+    from mmi.agent.tools import ToolDef
 
 
 # ToolDef 在 mmi.agent.tools 里有完整定义(3.6 改),这里只 re-export 保持向后兼容。
@@ -53,9 +52,6 @@ class BaseAgent(ABC):
         "agent_id",
         "name",
         "system_prompt",
-        "tools",
-        "skill_library",
-        "tool_registry",
         "llm",
     )
 
@@ -64,17 +60,11 @@ class BaseAgent(ABC):
         agent_id: str,
         name: str,
         system_prompt: str,
-        tools: list[ToolDef] | None = None,
-        skill_library: SkillLibrary | None = None,  # type: ignore[name-defined]
-        tool_registry: ToolRegistry | None = None,  # type: ignore[name-defined]
         llm: LLMProvider | None = None,
     ) -> None:
         self.agent_id = agent_id
         self.name = name
         self.system_prompt = system_prompt
-        self.tools = tools or []
-        self.skill_library = skill_library
-        self.tool_registry = tool_registry
         self.llm = llm  # None → run() 时用 get_default_provider()
 
     # ------------------------------------------------------------------

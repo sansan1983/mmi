@@ -9,12 +9,10 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from mmi.agent.base import BaseAgent, ToolDef
+from mmi.agent.base import BaseAgent
 
 if TYPE_CHECKING:
     from mmi.agent.modes import ThinkingMode
-    from mmi.agent.skill import SkillLibrary
-    from mmi.agent.tools import ToolRegistry
     from mmi.core.llm import LLMProvider
 
 
@@ -41,18 +39,12 @@ class DocAgent(BaseAgent):
     def __init__(
         self,
         system_prompt: str = DEFAULT_SYSTEM_PROMPT,
-        tools: list[ToolDef] | None = None,
-        skill_library: SkillLibrary | None = None,
-        tool_registry: ToolRegistry | None = None,
         llm: LLMProvider | None = None,
     ) -> None:
         super().__init__(
             agent_id="doc",
             name="Doc",
             system_prompt=system_prompt,
-            tools=tools,
-            skill_library=skill_library,
-            tool_registry=tool_registry,
             llm=llm,
         )
 

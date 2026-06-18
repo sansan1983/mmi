@@ -20,14 +20,13 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from typing import TypeVar
 
 __all__ = [
     "search_top_k",
     "tokenize",
     "score_turns",
-    "expand_to_rounds",
     "fuzzy_match_scores",
 ]
 
@@ -277,19 +276,6 @@ def search_top_k(
     # 按原顺序输出
     picked_indices.sort()
     return [turns[i] for i in picked_indices]
-
-
-def expand_to_rounds(turns: list[dict], indices: Iterable[int]) -> list[dict]:
-    """把一组 turn 索引扩展到完整轮（user + assistant 配对）。"""
-    picked = set(indices)
-    out_indices: set[int] = set()
-    for i in picked:
-        out_indices.add(i)
-        if turns[i].get("role") == "user" and i + 1 < len(turns):
-            out_indices.add(i + 1)
-        elif turns[i].get("role") == "assistant" and i - 1 >= 0:
-            out_indices.add(i - 1)
-    return [turns[i] for i in sorted(out_indices)]
 
 
 # ---------------------------------------------------------------------------

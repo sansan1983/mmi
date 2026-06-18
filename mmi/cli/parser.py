@@ -70,9 +70,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_tui = sub.add_parser("tui", help="启动 TUI（TypeScript + Ink）")
     p_tui.add_argument("--build", action="store_true", help="强制重新构建 tui-ts bundle")
 
-    # tui-python
-    sub.add_parser("tui-python", help="启动新版 Python TUI（Textual）")
-
     # doctor
     sub.add_parser("doctor", help="系统诊断")
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, fields
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import Any
 
 from ulid import ULID
 
@@ -26,7 +26,6 @@ __all__ = [
     "SessionMeta",
     "Session",
     "SessionState",
-    "ULID_PATTERN",
     "new_session_id",
     "utcnow_iso",
     "DEFAULT_TITLE",
@@ -62,14 +61,6 @@ class SessionState(str):
         return f"SessionState({self.value!r})"
 
 
-# 为向后兼容保留旧别名（heat.py / manager.py 用 Literal 做类型注解时仍可引用）
-SessionStateLiteral = Literal["active", "warm", "cold", "zombie"]
-
-# ULID 校验正则：26 字符 Crockford Base32（含 0-9 A-H J-K M-N P-T V-Z；不含 I/L/O/U）。
-# storage.write_session / move_to_trash 等用 inline 表达式做防御性校验，本常量
-# 是同一规则的命名版本，供测试与外部模块直接复用。
-ULID_PATTERN = r"^[0-9A-HJKMNP-TV-Z]{26}$"
-
 # 新建会话的占位标题 / 摘要
 # 真实生成在 Phase 2（titler.py / summarizer.py）
 DEFAULT_TITLE = "untitled"
@@ -96,12 +87,8 @@ def utcnow_iso() -> str:
 
     frontmatter 里所有时间字段都用这个格式。
     """
-    # 用 datetime 手动拼，避免依赖外部 ISO 库
-    from datetime import datetime
-
-    dt = datetime.now(UTC)
-    # 强制毫秒精度 + Z 后缀
-    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
+    from mmi.core import _time
+    return _time.utcnow_iso()
 
 
 def _parse_datetime(value: Any) -> datetime | None:

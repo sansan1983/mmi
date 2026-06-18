@@ -182,9 +182,9 @@ def check_gc() -> dict:
     try:
         report = gc_mod.gc_all(dry_run=True)
         print(f"  Trash:  {len(report.trash_entries)} entries")
-        trash_bytes = sum(e.size for e in report.trash_entries)
+        trash_bytes = sum(e.bytes_freed for e in report.trash_entries)
         print(f"  Zombie: {len(report.zombie_entries)} entries")
-        zombie_bytes = sum(e.size for e in report.zombie_entries)
+        zombie_bytes = sum(e.bytes_freed for e in report.zombie_entries)
         return {"trash_entries": len(report.trash_entries), "trash_bytes": trash_bytes,
                 "zombie_entries": len(report.zombie_entries), "zombie_bytes": zombie_bytes}
     except Exception as e:
