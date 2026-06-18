@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+from argparse import Namespace
 
 from mmi.agent.builtin import CodeReviewAgent, DocAgent  # noqa: F401
 from mmi.agent.modes import ThinkingMode as TM  # noqa: N817
@@ -10,6 +11,7 @@ from mmi.agent.orchestrator import Orchestrator
 from mmi.agent.registry import AgentMeta, AgentRegistry
 from mmi.cli import dispatch_subcommand, ensure_mmi_home
 from mmi.core import i18n
+from mmi.core.manager import SessionManager
 
 
 def _register_builtin_agents(reg) -> None:
@@ -40,7 +42,7 @@ def _register_builtin_agents(reg) -> None:
         )
 
 
-def cmd_agent(args, mgr) -> int:
+def cmd_agent(args: Namespace, mgr: SessionManager) -> int:
     ensure_mmi_home()
     return dispatch_subcommand(
         args,
@@ -53,7 +55,7 @@ def cmd_agent(args, mgr) -> int:
     )
 
 
-def _agent_list(args) -> int:
+def _agent_list(args: Namespace) -> int:
     reg = AgentRegistry.get_instance()
     _register_builtin_agents(reg)
     metas = reg.list_all(tag=getattr(args, "tag", None))
@@ -67,7 +69,7 @@ def _agent_list(args) -> int:
     return 0
 
 
-def _agent_invoke(args, mgr) -> int:
+def _agent_invoke(args: Namespace, mgr: SessionManager) -> int:
     reg = AgentRegistry.get_instance()
     _register_builtin_agents(reg)
     agent_id = args.agent_id

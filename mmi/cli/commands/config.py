@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from argparse import Namespace
 from dataclasses import replace
 
 from mmi.cli import dispatch_subcommand, ensure_mmi_home
 from mmi.core import config as cfg_mod
 from mmi.core import i18n, model_fetcher
 from mmi.core import providers as prov_mod
+from mmi.core.manager import SessionManager
 
 # ---------------------------------------------------------------------------
 # 辅助函数
@@ -59,7 +61,7 @@ def _confirm(prompt: str, *, default: bool = False) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def _config_wizard(args) -> int:
+def _config_wizard(args: Namespace) -> int:
     """交互式 LLM 配置向导。"""
     print("=" * 50)
     print(i18n.t("wizard.banner"))
@@ -225,7 +227,7 @@ def _config_show() -> int:
     return 0
 
 
-def cmd_config(args, mgr) -> int:
+def cmd_config(args: Namespace, mgr: SessionManager) -> int:
     ensure_mmi_home()
     return dispatch_subcommand(
         args,

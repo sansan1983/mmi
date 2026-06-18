@@ -3,7 +3,7 @@
 > 完整历史日志。近期 3 条见 `CLAUDE.md` 顶部「近期日志」表。
 
 | 日期 | 动作 | 产出 |
-|------|------|------|
+| 2026-06-18 | P6：补全 cmd_*.py 公共 API 类型标注 | 18 + 8 + 2 函数加 `args: Namespace, mgr: SessionManager` |
 | 2026-06-18 | P5：i18n 化 config.py wizard + show | 38 词条（wizard.* 36 + config_show.* 2） |
 | 2026-06-18 | P4：i18n 化 12 个 cmd_*.py 硬编码 | 3 批 ~80 处 print → `i18n.t(...)` + 70+ 词条。跳过 config.py wizard 32 处 |
 | 2026-06-18 | P3-E：拆 `tui_v3.py` 810 行 → `tui_v3/` 包 | 5 子模块（872 行）+ `__init__.py` 45 行 re-export。零 test 改动 |

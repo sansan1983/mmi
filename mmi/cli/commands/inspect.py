@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from argparse import Namespace
+
 from mmi.cli import ensure_mmi_home, require_session
 from mmi.core import context as _loader
 from mmi.core import i18n
+from mmi.core.manager import SessionManager
 
 
-def cmd_inspect(args, mgr) -> int:
+def cmd_inspect(args: Namespace, mgr: SessionManager) -> int:
     ensure_mmi_home()
     sid = args.session_id
     _, code = require_session(sid, mgr)

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from argparse import Namespace
+
 from mmi.cli import ensure_mmi_home
 from mmi.core import i18n
+from mmi.core.manager import SessionManager
 
 
-def cmd_list(args, mgr) -> int:
+def cmd_list(args: Namespace, mgr: SessionManager) -> int:
     ensure_mmi_home()
     sessions = mgr.list_sessions(limit=args.limit)
     if args.state != "all":

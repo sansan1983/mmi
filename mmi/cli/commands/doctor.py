@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import os
 import sys
+from argparse import Namespace
 
 from mmi.cli import ensure_mmi_home
+from mmi.core.manager import SessionManager
 
 
-def cmd_doctor(args, mgr) -> int:
+def cmd_doctor(args: Namespace, mgr: SessionManager) -> int:
     """系统诊断：转发到 mmi.tools.doctor。"""
     ensure_mmi_home()
 

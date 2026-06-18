@@ -13,12 +13,14 @@
 from __future__ import annotations
 
 import importlib
+from argparse import Namespace
 from collections.abc import Callable
 
 from mmi import __product_name__, __version__
 from mmi.cli.parser import build_parser
 from mmi.core import i18n
 from mmi.core import manager as mgr_module
+from mmi.core.manager import SessionManager
 
 # 子命令名 → (模块, 公开函数名)；按字母排序便于检索。
 # 懒加载在 _dispatch 内做，避免一次性 import 全部子命令（启动更轻）。
@@ -44,14 +46,14 @@ _COMMANDS: dict[str, tuple[str, str]] = {
 }
 
 
-def _load_command(name: str) -> Callable:
+def _load_command(name: str) -> Callable[..., int]:
     """懒加载子命令模块并返回 cmd_<name> 函数。"""
     mod_path, attr = _COMMANDS[name]
     mod = importlib.import_module(mod_path)
     return getattr(mod, attr)
 
 
-def _dispatch(args, mgr) -> int:
+def _dispatch(args: Namespace, mgr: SessionManager) -> int:
     """分发子命令到对应实现。未知/缺省子命令时打印提示。"""
     name = getattr(args, "command", None)
     if name in _COMMANDS:

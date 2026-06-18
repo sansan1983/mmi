@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+from argparse import Namespace
+
 from mmi.cli import ensure_mmi_home
 from mmi.core import gc as gc_module
 from mmi.core import i18n
+from mmi.core.manager import SessionManager
 
 
 def _fmt_entry(entry) -> str:
@@ -18,7 +21,7 @@ def _fmt_entry(entry) -> str:
     return base + mark + err
 
 
-def cmd_gc(args, mgr) -> int:
+def cmd_gc(args: Namespace, mgr: SessionManager) -> int:
     ensure_mmi_home()
     mode = args.gc_only
     ttl = args.ttl_days

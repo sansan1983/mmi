@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from argparse import Namespace
 from datetime import UTC, datetime
 
 from mmi.agent.skill import Skill, SkillLibrary, SkillType
 from mmi.cli import dispatch_subcommand, ensure_mmi_home
 from mmi.core import i18n
+from mmi.core.manager import SessionManager
 
 
 def _skill_list() -> int:
@@ -21,7 +23,7 @@ def _skill_list() -> int:
     return 0
 
 
-def _skill_search(args) -> int:
+def _skill_search(args: Namespace) -> int:
     lib = SkillLibrary.get_instance()
     query = args.query
     matches = lib.match(query, limit=10)
@@ -34,7 +36,7 @@ def _skill_search(args) -> int:
     return 0
 
 
-def _skill_create(args) -> int:
+def _skill_create(args: Namespace) -> int:
     lib = SkillLibrary.get_instance()
     now = datetime.now(UTC).isoformat()
     tags = [t.strip() for t in (args.tags or "").split(",") if t.strip()]
@@ -57,7 +59,7 @@ def _skill_create(args) -> int:
         return 1
 
 
-def cmd_skill(args, mgr) -> int:
+def cmd_skill(args: Namespace, mgr: SessionManager) -> int:
     ensure_mmi_home()
     return dispatch_subcommand(
         args,

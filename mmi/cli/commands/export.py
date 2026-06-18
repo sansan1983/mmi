@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import json
+from argparse import Namespace
 from pathlib import Path
 
 from mmi.cli import ensure_mmi_home, require_session
 from mmi.core import i18n
+from mmi.core.manager import SessionManager
 
 
-def cmd_export(args, mgr) -> int:
+def cmd_export(args: Namespace, mgr: SessionManager) -> int:
     ensure_mmi_home()
     sess, code = require_session(args.session_id, mgr)
     if code:

@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from argparse import Namespace
+
 from mmi.cli import ensure_mmi_home, require_session
 from mmi.core import i18n, storage
+from mmi.core.manager import SessionManager
 
 
-def cmd_chat(args, mgr) -> int:
+def cmd_chat(args: Namespace, mgr: SessionManager) -> int:
     ensure_mmi_home()
     sid = args.session_id
 

@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+from argparse import Namespace
+
 from mmi.cli import dispatch_subcommand, ensure_mmi_home
 from mmi.core import i18n, memory
+from mmi.core.manager import SessionManager
 
 
 def _memory_count() -> int:
@@ -12,7 +15,7 @@ def _memory_count() -> int:
     return 0
 
 
-def _memory_clear(args) -> int:
+def _memory_clear(args: Namespace) -> int:
     if not args.yes:
         print(i18n.t("memory.clear.confirm"))
         return 1
@@ -21,7 +24,7 @@ def _memory_clear(args) -> int:
     return 0
 
 
-def _memory_search(args) -> int:
+def _memory_search(args: Namespace) -> int:
     query = " ".join(args.query).strip()
     if not query:
         print(i18n.t("memory.search.usage"))
@@ -44,7 +47,7 @@ def _memory_search(args) -> int:
     return 0
 
 
-def cmd_memory(args, mgr) -> int:
+def cmd_memory(args: Namespace, mgr: SessionManager) -> int:
     ensure_mmi_home()
     return dispatch_subcommand(
         args,

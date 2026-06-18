@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from argparse import Namespace
+
 from mmi.cli import ensure_mmi_home
 from mmi.core import i18n
+from mmi.core.manager import SessionManager
 
 
-def cmd_update(args, mgr) -> int:
+def cmd_update(args: Namespace, mgr: SessionManager) -> int:
     ensure_mmi_home()
     try:
         mgr.touch(args.session_id)

@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+from argparse import Namespace
 from collections import Counter
 
 from mmi.cli import ensure_mmi_home
 from mmi.core import i18n, storage
+from mmi.core.manager import SessionManager
 
 
-def cmd_stat(args, mgr) -> int:
+def cmd_stat(args: Namespace, mgr: SessionManager) -> int:
     ensure_mmi_home()
     all_sids = storage.list_session_ids()
     trash_sids = storage.list_trash_ids()

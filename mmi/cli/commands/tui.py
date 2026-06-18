@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+from argparse import Namespace
+
 import portalocker
 
 from mmi.cli import ensure_mmi_home
 from mmi.core import paths
+from mmi.core.manager import SessionManager
 
 
-def cmd_tui(args, mgr) -> int:
+def cmd_tui(args: Namespace, mgr: SessionManager) -> int:
     """启动 TUI v3（mmi.tui_v3.run_tui）。"""
     ensure_mmi_home()
 
