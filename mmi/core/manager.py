@@ -378,79 +378,12 @@ class SessionManager:
         except LLMError as e:
             reply = f"[LLM error: {e}]"
 
-        # 3) 追加 turn
-        s = storage.append_turn(session_id, user_input, reply)
-
-        # 4) 跨会话记忆入库(每轮都跑,不等摘要)
-        #   短会话(<20 轮/5000 字/24h)不触发摘要,但记忆照样要进库
-        #   content_hash 已做去重,重复 body 不会重复入库
-        with contextlib.suppress(Exception):
-            summarizer._schedule_memory_store(session_id)
-
-        # 5) 摘要更新检查(§8.3)—— should_update 同步判,update 后台跑
-        #   Phase 6:避免 LLM 慢调用阻塞 chat 主流程;UI 看到 summary_updated
-        #   是"将要更新"的乐观信号,实际落盘在后台。
-        try:
-            will_update = summarizer.should_update_summary(s.meta, s.body)
-        except Exception:
-            will_update = False
-        if will_update:
-            summarizer.schedule_summary_update(
-                session_id, self.llm, language=language
-            )
-        summary_updated = will_update
-
-        # 6) 检查点
-        trashed = False
-        trashed_reason = ""
-        title_updated = False
-
-        n_user = storage.count_user_turns(s.body)
-
-        # Classifier checkpoint
-        if n_user in _CLASSIFY_AT_TURNS:
-            turns = storage.parse_turns(s.body)
-            result = cls_module.classify_session(turns, self.llm, language=language)
-            if cls_module.is_trash(result):
-                storage.move_to_trash(session_id)
-                trashed = True
-                trashed_reason = result.reason
-
-        # Titler checkpoint（在 trash 检查后：万一被 trash 了就不再 titler）
-        # P2-4: 首次（10轮）一定生成；后续只在话题偏移时才生成
-        if (not trashed) and n_user in _TITLE_AT_TURNS:
-            turns = storage.parse_turns(s.body)
-            should_retitle = (n_user == 10) or titler.detect_topic_drift(
-                turns, language=language
-            )
-            if should_retitle:
-                new_title = titler.generate_title(turns, self.llm, language=language)
-                cur = s.meta.title
-                if new_title and new_title != cur:
-                    s.meta.title = new_title
-                    storage.write_session(s)
-                    title_updated = True
-
-        # 6) heat 重算（Phase 4：ARCHITECTURE §8.4）
-        #    被 trash 的会话不重算（不参与主列表排序）
-        if not trashed:
-            self._recompute_heat(session_id)
-
-        # 7) P1A-1: 通知 GC daemon 本次 chat 完成（后台线程按需触发 GC）
-        #    懒启动：首次 chat 时 ensure_started() 启动 daemon 线程
-        try:
-            from . import gc_daemon as _gc_daemon
-            _gc_daemon._get_gc_daemon().on_chat_done()
-        except Exception:
-            pass
-
-        return ChatResult(
-            reply=reply,
-            title_updated=title_updated,
-            summary_updated=summary_updated,
+        return self._post_chat_pipeline(
+            session_id,
+            user_input,
+            reply,
             context_truncated=context_truncated,
-            trashed=trashed,
-            trashed_reason=trashed_reason,
+            language=language,
         )
 
     def stream_chat(
@@ -491,7 +424,6 @@ class SessionManager:
             session_id, user_input, config=config, language=language
         )
         messages = ctx.messages
-        _context_truncated = ctx.truncated  # noqa: F841
 
         # 3) 流式 LLM 调用，收集完整 reply
         chunks: list[str] = []
@@ -505,14 +437,53 @@ class SessionManager:
 
         reply = "".join(chunks)
 
-        # 4) 一次性写入 turn
+        # 4) 写盘 + checkpoints（流结束后一次性处理；helper 返 ChatResult 但流式不抛）
+        self._post_chat_pipeline(
+            session_id,
+            user_input,
+            reply,
+            context_truncated=ctx.truncated,
+            language=language,
+        )
+
+    def _post_chat_pipeline(
+        self,
+        session_id: str,
+        user_input: str,
+        reply: str,
+        *,
+        context_truncated: bool,
+        language: str,
+    ) -> ChatResult:
+        """chat() / stream_chat() 共用：调完 LLM 后的写入 + checkpoint 链。
+
+        流程：
+          1. append_turn 写入 turn
+          2. 跨会话记忆入库(每轮跑,content_hash 去重)
+          3. 摘要更新检查(should_update 同步判,update 后台跑)
+          4. classifier checkpoint(3/10/20 轮)
+          5. titler checkpoint(10/20 轮,首次必生成,后续偏移才生成)
+          6. heat 重算(trashed 不算)
+          7. GC daemon 通知
+
+        Args:
+            session_id: 目标会话
+            user_input: 用户原始输入(写盘用)
+            reply: 拼好的 LLM 回复(写盘用)
+            context_truncated: build_context 是否截断(传入 ChatResult)
+            language: 输出语言(从 chat()/stream_chat() 传入,已经 resolve 过)
+
+        Returns:
+            ChatResult(stream_chat 不消费但仍构造)
+        """
+        # 1) 追加 turn
         s = storage.append_turn(session_id, user_input, reply)
 
-        # 5) 跨会话记忆入库
+        # 2) 跨会话记忆入库(每轮都跑,不等摘要)
         with contextlib.suppress(Exception):
             summarizer._schedule_memory_store(session_id)
 
-        # 6) 摘要更新检查
+        # 3) 摘要更新检查(§8.3)—— should_update 同步判,update 后台跑
         try:
             will_update = summarizer.should_update_summary(s.meta, s.body)
         except Exception:
@@ -521,11 +492,12 @@ class SessionManager:
             summarizer.schedule_summary_update(
                 session_id, self.llm, language=language
             )
+        summary_updated = will_update
 
-        # 7) classifier / titler checkpoint
+        # 4) classifier / titler checkpoint
         trashed = False
-        _trashed_reason = ""  # noqa: F841
-        _title_updated = False  # noqa: F841
+        trashed_reason = ""
+        title_updated = False
 
         n_user = storage.count_user_turns(s.body)
 
@@ -535,9 +507,9 @@ class SessionManager:
             if cls_module.is_trash(result):
                 storage.move_to_trash(session_id)
                 trashed = True
-                _trashed_reason = result.reason  # noqa: F841
+                trashed_reason = result.reason
 
-        # Titler checkpoint（P2-4: 首次一定生成，后续只在偏移时生成）
+        # P2-4: 首次(10轮)一定生成;后续只在话题偏移时才生成
         if (not trashed) and n_user in _TITLE_AT_TURNS:
             turns = storage.parse_turns(s.body)
             should_retitle = (n_user == 10) or titler.detect_topic_drift(
@@ -549,18 +521,27 @@ class SessionManager:
                 if new_title and new_title != cur:
                     s.meta.title = new_title
                     storage.write_session(s)
-                    _title_updated = True  # noqa: F841
+                    title_updated = True
 
-        # 8) heat 重算
+        # 5) heat 重算（trashed 不参与主列表排序）
         if not trashed:
             self._recompute_heat(session_id)
 
-        # 9) GC daemon 通知
+        # 6) P1A-1: 通知 GC daemon 本次 chat 完成（后台线程按需触发 GC）
         try:
             from . import gc_daemon as _gc_daemon
             _gc_daemon._get_gc_daemon().on_chat_done()
         except Exception:
             pass
+
+        return ChatResult(
+            reply=reply,
+            title_updated=title_updated,
+            summary_updated=summary_updated,
+            context_truncated=context_truncated,
+            trashed=trashed,
+            trashed_reason=trashed_reason,
+        )
 
     # ----- 删 / 归档 / 杂项 ------------------------------------------------
 

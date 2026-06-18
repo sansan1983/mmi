@@ -14,7 +14,9 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import Any
+
+import mmi.core._patterns
 
 # ---------------------------------------------------------------------------
 # Data classes
@@ -158,7 +160,7 @@ class FuncEvaluator:
 # ---------------------------------------------------------------------------
 
 
-class EvalRunner:
+class EvalRunner(mmi.core._patterns.Singleton):
     """Run evaluations and produce reports.
 
     Usage::
@@ -172,21 +174,13 @@ class EvalRunner:
         print(report.summary())
     """
 
-    _instance: ClassVar[EvalRunner | None] = None
-
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._reports: list[EvalReport] = []
 
     @classmethod
-    def get_instance(cls: type[EvalRunner]) -> EvalRunner:
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
-
-    @classmethod
     def reset_instance(cls: type[EvalRunner]) -> None:
-        cls._instance = None
+        mmi.core._patterns.Singleton.reset_instance()
 
     def run(
         self,

@@ -12,78 +12,51 @@
 
 from __future__ import annotations
 
+import importlib
+from collections.abc import Callable
+
 from mmi import __product_name__, __version__
 from mmi.cli.parser import build_parser
 from mmi.core import i18n
 from mmi.core import manager as mgr_module
 
+# 子命令名 → (模块, 公开函数名)；按字母排序便于检索。
+# 懒加载在 _dispatch 内做，避免一次性 import 全部子命令（启动更轻）。
+_COMMANDS: dict[str, tuple[str, str]] = {
+    "agent": ("mmi.cli.commands.agent", "cmd_agent"),
+    "archive": ("mmi.cli.commands.archive", "cmd_archive"),
+    "chat": ("mmi.cli.commands.chat", "cmd_chat"),
+    "config": ("mmi.cli.commands.config", "cmd_config"),
+    "delete": ("mmi.cli.commands.delete", "cmd_delete"),
+    "doctor": ("mmi.cli.commands.doctor", "cmd_doctor"),
+    "export": ("mmi.cli.commands.export", "cmd_export"),
+    "gc": ("mmi.cli.commands.gc", "cmd_gc"),
+    "info": ("mmi.cli.commands.info", "cmd_info"),
+    "inspect": ("mmi.cli.commands.inspect", "cmd_inspect"),
+    "list": ("mmi.cli.commands.list", "cmd_list"),
+    "memory": ("mmi.cli.commands.memory", "cmd_memory"),
+    "new": ("mmi.cli.commands.new", "cmd_new"),
+    "rename": ("mmi.cli.commands.rename", "cmd_rename"),
+    "skill": ("mmi.cli.commands.skill", "cmd_skill"),
+    "stat": ("mmi.cli.commands.stat", "cmd_stat"),
+    "tui": ("mmi.cli.commands.tui", "cmd_tui"),
+    "update": ("mmi.cli.commands.update", "cmd_update"),
+}
 
-# 每个子命令通过直接模块导入，避免循环 import
+
+def _load_command(name: str) -> Callable:
+    """懒加载子命令模块并返回 cmd_<name> 函数。"""
+    mod_path, attr = _COMMANDS[name]
+    mod = importlib.import_module(mod_path)
+    return getattr(mod, attr)
+
+
 def _dispatch(args, mgr) -> int:
-    """分发子命令到对应实现。"""
-    if args.command == "new":
-        from mmi.cli.commands.new import cmd_new as cmd_new_func  # noqa: E402
-        return cmd_new_func(args, mgr)
-    elif args.command == "list":
-        from mmi.cli.commands.list import cmd_list as cmd_list_func  # noqa: E402
-        return cmd_list_func(args, mgr)
-    elif args.command == "chat":
-        from mmi.cli.commands.chat import cmd_chat as cmd_chat_func  # noqa: E402
-        return cmd_chat_func(args, mgr)
-    elif args.command == "archive":
-        from mmi.cli.commands.archive import cmd_archive as cmd_archive_func  # noqa: E402
-        return cmd_archive_func(args, mgr)
-    elif args.command == "delete":
-        from mmi.cli.commands.delete import cmd_delete as cmd_delete_func  # noqa: E402
-        return cmd_delete_func(args, mgr)
-    elif args.command == "gc":
-        from mmi.cli.commands.gc import cmd_gc as cmd_gc_func  # noqa: E402
-        return cmd_gc_func(args, mgr)
-    elif args.command == "tui":
-        from mmi.cli.commands.tui import cmd_tui as cmd_tui_func  # noqa: E402
-        return cmd_tui_func(args, mgr)
-    elif args.command == "tui-python":
-        from mmi.cli.commands.tui_python import (  # noqa: E402
-            cmd_tui_python as cmd_tui_python_func,
-        )
-        return cmd_tui_python_func(args, mgr)
-    elif args.command == "doctor":
-        from mmi.cli.commands.doctor import (  # noqa: E402
-            cmd_doctor as cmd_doctor_func,
-        )
-        return cmd_doctor_func(args, mgr)
-    elif args.command == "stat":
-        from mmi.cli.commands.stat import cmd_stat as cmd_stat_func  # noqa: E402
-        return cmd_stat_func(args, mgr)
-    elif args.command == "export":
-        from mmi.cli.commands.export import cmd_export as cmd_export_func  # noqa: E402
-        return cmd_export_func(args, mgr)
-    elif args.command == "rename":
-        from mmi.cli.commands.rename import cmd_rename as cmd_rename_func  # noqa: E402
-        return cmd_rename_func(args, mgr)
-    elif args.command == "info":
-        from mmi.cli.commands.info import cmd_info as cmd_info_func  # noqa: E402
-        return cmd_info_func(args, mgr)
-    elif args.command == "inspect":
-        from mmi.cli.commands.inspect import cmd_inspect as cmd_inspect_func  # noqa: E402
-        return cmd_inspect_func(args, mgr)
-    elif args.command == "update":
-        from mmi.cli.commands.update import cmd_update as cmd_update_func  # noqa: E402
-        return cmd_update_func(args, mgr)
-    elif args.command == "memory":
-        from mmi.cli.commands.memory import cmd_memory as cmd_memory_func  # noqa: E402
-        return cmd_memory_func(args, mgr)
-    elif args.command == "config":
-        from mmi.cli.commands.config import cmd_config as cmd_config_func  # noqa: E402
-        return cmd_config_func(args, mgr)
-    elif args.command == "agent":
-        from mmi.cli.commands.agent import cmd_agent as cmd_agent_func  # noqa: E402
-        return cmd_agent_func(args, mgr)
-    elif args.command == "skill":
-        from mmi.cli.commands.skill import cmd_skill as cmd_skill_func  # noqa: E402
-        return cmd_skill_func(args, mgr)
+    """分发子命令到对应实现。未知/缺省子命令时打印提示。"""
+    name = getattr(args, "command", None)
+    if name in _COMMANDS:
+        return _load_command(name)(args, mgr)
 
-    # 无子命令：显示帮助
     print(i18n.t("cli.usage") + ":")
     print(f"  mmi {i18n.t('cli.command.new')}")
     print(f"  mmi {i18n.t('cli.command.list')}")
@@ -107,7 +80,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # --lang
     if args.lang:
-        i18n.init(args.lang)
+        i18n.set_lang(args.lang)
 
     # 初始化 SessionManager
     mgr = mgr_module.SessionManager()

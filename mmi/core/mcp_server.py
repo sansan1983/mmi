@@ -18,7 +18,9 @@ from __future__ import annotations
 import json
 import threading
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from typing import Any
+
+import mmi.core._patterns
 
 __all__ = [
     "MCPTool",
@@ -68,7 +70,7 @@ class MCPResponse:
         return d
 
 
-class MCPServer:
+class MCPServer(mmi.core._patterns.Singleton):
     """MCP Server implementation (stdio transport).
 
     Usage::
@@ -91,8 +93,6 @@ class MCPServer:
         }
     """
 
-    _instance: ClassVar[MCPServer | None] = None
-
     def __init__(self) -> None:
         self._tools: dict[str, MCPTool] = {}
         self._lock = threading.RLock()
@@ -103,14 +103,8 @@ class MCPServer:
         self._setup_default_tools()
 
     @classmethod
-    def get_instance(cls: type[MCPServer]) -> MCPServer:
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
-
-    @classmethod
     def reset_instance(cls: type[MCPServer]) -> None:
-        cls._instance = None
+        mmi.core._patterns.Singleton.reset_instance()
 
     # ------------------------------------------------------------------
     # Tool registration

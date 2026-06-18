@@ -45,8 +45,9 @@ import sys
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any
 
+import mmi.core._patterns
 from mmi.core.llm import LLMProvider
 from mmi.core.paths import get_root
 
@@ -73,7 +74,7 @@ class RegisteredProvider:
         return doc.strip() if doc else f"Custom provider: {self.name}"
 
 
-class ProviderRegistry:
+class ProviderRegistry(mmi.core._patterns.Singleton):
     """Discovers, loads, and manages custom Provider plugins.
 
     Singleton access via ``get_instance()``.  Thread-safe.
@@ -89,8 +90,6 @@ class ProviderRegistry:
             reply = instance.chat(messages)
     """
 
-    _instance: ClassVar[ProviderRegistry | None] = None
-
     def __init__(self, *, providers_dir: Path | None = None) -> None:
         self._providers: dict[str, RegisteredProvider] = {}
         self._lock = threading.RLock()
@@ -98,15 +97,9 @@ class ProviderRegistry:
         self._providers_dir.mkdir(parents=True, exist_ok=True)
 
     @classmethod
-    def get_instance(cls: type[ProviderRegistry]) -> ProviderRegistry:
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
-
-    @classmethod
     def reset_instance(cls: type[ProviderRegistry]) -> None:
         """For testing only."""
-        cls._instance = None
+        mmi.core._patterns.Singleton.reset_instance()
 
     # ------------------------------------------------------------------
     # Discovery

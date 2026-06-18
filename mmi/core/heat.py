@@ -26,6 +26,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from . import _time
 from .session import SessionState
 
 __all__ = [
@@ -271,9 +272,9 @@ def apply_heat_and_state(
         config = HeatConfig()
 
     # 解析时间
-    last_access = parse_iso_utc(meta.last_access)
-    created_at = parse_iso_utc(meta.created_at)
-    cold_since = parse_iso_utc(meta.cold_since) if hasattr(meta, "cold_since") else None
+    last_access = _time.parse_iso_utc(meta.last_access)
+    created_at = _time.parse_iso_utc(meta.created_at)
+    cold_since = _time.parse_iso_utc(meta.cold_since) if hasattr(meta, "cold_since") else None
 
     # 算 heat(P2-9:total_turns 给 content_weight,默认 0 = 短会话等效旧公式)
     new_heat = compute_heat(
@@ -297,41 +298,7 @@ def apply_heat_and_state(
     # 写回
     meta.heat = round(new_heat, 4)  # 避免浮点尾差
     meta.state = new_state
-    meta.cold_since = _format_iso_utc(new_cold_since) if new_cold_since is not None else ""
-
-
-# ---------------------------------------------------------------------------
-# 工具
-# ---------------------------------------------------------------------------
-
-
-def parse_iso_utc(value: str | datetime | None) -> datetime | None:
-    """把 ISO 字符串或 datetime 解析为带 tz 的 datetime。空串/None → None。"""
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value if value.tzinfo else value.replace(tzinfo=UTC)
-    if not value:
-        return None
-    s = value.strip()
-    if not s:
-        return None
-    try:
-        if s.endswith("Z"):
-            s = s[:-1] + "+00:00"
-        dt = datetime.fromisoformat(s)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=UTC)
-        return dt
-    except ValueError:
-        return None
-
-
-def _format_iso_utc(dt: datetime) -> str:
-    """把 datetime 格式化为 '2026-06-02T10:00:00.000Z'。"""
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
-    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + f"{dt.microsecond // 1000:03d}Z"
+    meta.cold_since = _time.format_iso_utc(new_cold_since) if new_cold_since is not None else ""
 
 
 # ---------------------------------------------------------------------------

@@ -8,7 +8,8 @@ from mmi.agent.builtin import CodeReviewAgent, DocAgent  # noqa: F401
 from mmi.agent.modes import ThinkingMode as TM  # noqa: N817
 from mmi.agent.orchestrator import Orchestrator
 from mmi.agent.registry import AgentMeta, AgentRegistry
-from mmi.cli import ensure_mmi_home
+from mmi.cli import dispatch_subcommand, ensure_mmi_home
+from mmi.core import i18n
 
 
 def _register_builtin_agents(reg) -> None:
@@ -41,50 +42,54 @@ def _register_builtin_agents(reg) -> None:
 
 def cmd_agent(args, mgr) -> int:
     ensure_mmi_home()
-    sub = getattr(args, "agent_cmd", None)
-    if sub is None:
-        print("usage: mmi agent {list|invoke}")
-        return 1
+    return dispatch_subcommand(
+        args,
+        "agent_cmd",
+        {
+            "list": lambda: _agent_list(args),
+            "invoke": lambda: _agent_invoke(args, mgr),
+        },
+        usage="usage: mmi agent {list|invoke}",
+    )
 
+
+def _agent_list(args) -> int:
     reg = AgentRegistry.get_instance()
     _register_builtin_agents(reg)
-
-    if sub == "list":
-        metas = reg.list_all(tag=getattr(args, "tag", None))
-        if not metas:
-            print("未注册任何 Agent")
-            return 0
-        print(f"已注册 {len(metas)} 个 Agent:\n")
-        for m in metas:
-            tags = ",".join(m.tags) if m.tags else "-"
-            print(f"  [{m.agent_id:14s}] {m.name:14s}  v{m.version}  ({m.description})")
-            print(f"      tags: {tags}  builtin: {m.builtin}")
+    metas = reg.list_all(tag=getattr(args, "tag", None))
+    if not metas:
+        print(i18n.t("agent.list.empty"))
         return 0
+    print(i18n.t("agent.list.header", count=len(metas)))
+    for m in metas:
+        tags = ",".join(m.tags) if m.tags else "-"
+        print(i18n.t("agent.list.entry", agent_id=m.agent_id, name=m.name, version=m.version, description=m.description, tags=tags, builtin=m.builtin))
+    return 0
 
-    if sub == "invoke":
-        agent_id = args.agent_id
-        agent_cls = reg.match(agent_id)
-        if agent_cls is None:
-            print(f"[!] Agent {agent_id!r} 未注册")
-            return 1
-        try:
-            orch = Orchestrator(manager=mgr, llm=mgr.llm)
-        except Exception as e:
-            print(f"[!] Orchestrator 初始化失败: {e}")
-            return 1
-        mode_str = getattr(args, "mode", None)
-        mode = TM[mode_str] if mode_str else None
-        try:
-            reply = orch.chat_legacy(
-                session_id=args.session,
-                user_message=args.message,
-                mode=mode,
-            )
-            print(reply)
-            return 0
-        except Exception as e:
-            print(f"[!] 调用失败: {e}")
-            return 1
 
-    print(f"unknown agent subcommand: {sub}")
-    return 1
+def _agent_invoke(args, mgr) -> int:
+    reg = AgentRegistry.get_instance()
+    _register_builtin_agents(reg)
+    agent_id = args.agent_id
+    agent_cls = reg.match(agent_id)
+    if agent_cls is None:
+        print(i18n.t("agent.invoke.not_registered", id=agent_id))
+        return 1
+    try:
+        orch = Orchestrator(manager=mgr, llm=mgr.llm)
+    except Exception as e:
+        print(i18n.t("agent.invoke.orchestrator_failed", error=str(e)))
+        return 1
+    mode_str = getattr(args, "mode", None)
+    mode = TM[mode_str] if mode_str else None
+    try:
+        reply = orch.chat_legacy(
+            session_id=args.session,
+            user_message=args.message,
+            mode=mode,
+        )
+        print(reply)
+        return 0
+    except Exception as e:
+        print(i18n.t("agent.invoke.failed", error=str(e)))
+        return 1

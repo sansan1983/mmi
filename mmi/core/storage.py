@@ -24,11 +24,12 @@ import re
 import shutil
 import tempfile
 from collections import OrderedDict
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
+from typing import TypeVar
 
 import portalocker
 import yaml
@@ -57,6 +58,8 @@ __all__ = [
     "format_turn",
     "parse_turns",
     "count_user_turns",
+    "atomic_write",
+    "atomic_modify_session",
 ]
 
 # ---------------------------------------------------------------------------
@@ -442,6 +445,46 @@ def _atomic_write(path: Path, content: str) -> None:
         raise
 
 
+def atomic_write(path: Path, content: str) -> None:
+    """公开版 _atomic_write —— 供非 session 文件（config / skill / export）原子写入用。"""
+    _atomic_write(path, content)
+
+
+_T = TypeVar("_T")
+
+
+def atomic_modify_session(
+    session_id: str,
+    modifier: Callable[[Session], _T],
+) -> _T:
+    """Read-modify-write under exclusive lock with atomic file replace.
+
+    Holds _exclusive_lock(session_id) across read → modifier → atomic write
+    → cache update. Returns whatever *modifier* returns.
+
+    适用场景:update_access / append_turn 这类"读最新 → 内存里改 → 写回"的
+    同步操作,不需要在锁外做耗时计算(比如 LLM 调用)。
+
+    不适用:update_summary 那种"先无锁读 → LLM 调 → 再加锁重读合并写"的
+    延迟模式;也不适用 move_to_trash 那种"写完再跨目录 move"需要锁住
+    整个额外操作的情况。
+
+    Raises:
+        SessionNotFound: 会话文件不存在
+        SessionCorrupt: frontmatter 损坏
+        OSError: 磁盘满 / 权限拒绝
+    """
+    paths.ensure_dirs()
+    with _exclusive_lock(session_id):
+        s = read_session(session_id)
+        result = modifier(s)
+        content = _dump_frontmatter(s.meta) + s.body
+        _atomic_write(session_path(session_id), content)
+        _cache_invalidate(session_id)
+        _cache_set_session(session_id, s)
+        return result
+
+
 def _unlink_with_retry(path: Path, max_retries: int = 3, base_delay: float = 0.05) -> None:
     """Windows 并发 safe unlink，加指数退避。"""
     import time as _time
@@ -487,23 +530,14 @@ def update_access(session_id: str) -> SessionMeta:
     Returns:
         更新后的 SessionMeta（heat / access_count / last_access 已刷新）
     """
-    paths.ensure_dirs()
-    with _exclusive_lock(session_id):
-        s = read_session(session_id)
+    def _mutate(s: Session) -> SessionMeta:
         now = utcnow_iso()
         s.meta.last_access = now
         s.meta.access_count += 1
         s.meta.updated_at = now
-        # heat + state 重新算（Round 0.7：state 持久化，避免下次重新计算）
         heat_module.apply_heat_and_state(s.meta)
-        # 只写 frontmatter 部分，不动 body（state 已写入 meta）
-        content = _dump_frontmatter(s.meta) + s.body
-        _atomic_write(session_path(session_id), content)
-        # 使缓存失效并重新写入
-        _cache_invalidate(session_id)
-        _cache_set_meta(session_id, s.meta)
-        _cache_set_session(session_id, s)
         return s.meta
+    return atomic_modify_session(session_id, _mutate)
 
 
 def append_turn(
@@ -516,23 +550,15 @@ def append_turn(
     返回更新后的 Session（供 manager 立即使用）。
     实现：先锁 → 读 → 改 → 原子写 → 解锁。
     """
-    paths.ensure_dirs()
-    with _exclusive_lock(session_id):
-        # 在锁内读最新 frontmatter（避免 stale view）
-        s = read_session(session_id)
+    def _mutate(s: Session) -> Session:
         new_turn = format_turn(user, assistant)
         s.body = s.body + ("\n" if s.body and not s.body.endswith("\n") else "") + new_turn
         now = utcnow_iso()
         s.meta.updated_at = now
         s.meta.last_access = now
         s.meta.access_count += 1
-        # 重写全文
-        content = _dump_frontmatter(s.meta) + s.body
-        _atomic_write(session_path(session_id), content)
-        # 使缓存失效并重新写入
-        _cache_invalidate(session_id)
-        _cache_set_session(session_id, s)
         return s
+    return atomic_modify_session(session_id, _mutate)
 
 
 # ---------------------------------------------------------------------------

@@ -94,15 +94,18 @@ def save_config(cfg: dict[str, Any]) -> bool:
     """
     try:
         paths.ensure_dirs()
-        with paths.get_config_path().open("w", encoding="utf-8") as f:
-            yaml.safe_dump(
-                cfg,
-                f,
-                allow_unicode=True,
-                sort_keys=False,
-                default_flow_style=False,
-                width=4096,
-            )
+        from io import StringIO
+        buf = StringIO()
+        yaml.safe_dump(
+            cfg,
+            buf,
+            allow_unicode=True,
+            sort_keys=False,
+            default_flow_style=False,
+            width=4096,
+        )
+        from mmi.core.storage import atomic_write
+        atomic_write(paths.get_config_path(), buf.getvalue())
         return True
     except OSError:
         return False

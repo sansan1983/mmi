@@ -2,20 +2,17 @@
 
 from __future__ import annotations
 
-import sys
-
-from mmi.cli import ensure_mmi_home
+from mmi.cli import ensure_mmi_home, require_session
 from mmi.core import context as _loader
+from mmi.core import i18n
 
 
 def cmd_inspect(args, mgr) -> int:
     ensure_mmi_home()
     sid = args.session_id
-    try:
-        mgr.get(sid)
-    except Exception:
-        print(f"session not found: {sid}", file=sys.stderr)
-        return 1
+    _, code = require_session(sid, mgr)
+    if code:
+        return code
 
     user_input = args.text if args.text is not None else ""
     config = _loader.LoaderConfig()
@@ -25,40 +22,43 @@ def cmd_inspect(args, mgr) -> int:
     sys_content = sys_msg.get("content", "") or ""
 
     print("=" * 60)
-    print(f"mmi inspect  |  session={sid}")
+    print(i18n.t("inspect.banner", sid=sid))
     print("=" * 60)
-    print(f"  turn_limit    : {config.recent_turns}")
-    print(f"  recent_turns  : {len(ctx.recent_turns)} pairs kept")
-    print(f"  hit_paragraphs: {len(ctx.hit_turns)} kept")
-    print(f"  token_limit   : {config.max_tokens}")
-    print(f"  tokens used   : {ctx.estimated_tokens} ({ctx.estimated_tokens/config.max_tokens*100:.1f}%)")
+    print(i18n.t("inspect.turn_limit", n=config.recent_turns))
+    print(i18n.t("inspect.recent_turns", n=len(ctx.recent_turns)))
+    print(i18n.t("inspect.hit_paragraphs", n=len(ctx.hit_turns)))
+    print(i18n.t("inspect.token_limit", n=config.max_tokens))
+    print(i18n.t("inspect.tokens_used", used=ctx.estimated_tokens, pct=ctx.estimated_tokens / config.max_tokens * 100))
     print()
-    print("[system prompt]")
-    print(f"  {len(sys_content)} chars  |  {_loader.estimate_tokens([sys_msg])} tokens")
-    print(f"  {sys_content[:200]}")
+    print(i18n.t("inspect.system_prompt_label"))
+    print(i18n.t("inspect.system_prompt_stats", chars=len(sys_content), tokens=_loader.estimate_tokens([sys_msg])))
+    print(i18n.t("inspect.system_prompt_content", content=sys_content[:200]))
 
     if ctx.recent_turns:
-        print(f"\n[recent turns]  last {len(ctx.recent_turns)} pairs")
+        print()
+        print(i18n.t("inspect.recent_turns_label", n=len(ctx.recent_turns)))
         for j, turn in enumerate(ctx.recent_turns):
             role = turn.get("role", "?")
             cont = turn.get("content", "")
-            print(f"  #{j+1} [{role}] {len(cont)} chars")
-            print(f"    {cont[:150].replace(chr(10), ' ')}")
+            print(i18n.t("inspect.recent_turn_entry", n=j + 1, role=role, chars=len(cont)))
+            print(i18n.t("inspect.recent_turn_content", content=cont[:150].replace(chr(10), " ")))
 
     if ctx.hit_turns:
-        print(f"\n[hit paragraphs]  {len(ctx.hit_turns)}")
+        print()
+        print(i18n.t("inspect.hit_paragraphs_label", n=len(ctx.hit_turns)))
         for j, hit in enumerate(ctx.hit_turns):
             sc = hit.get("score", "?")
             cont = hit.get("content", "")
-            print(f"  #{j+1}  score={sc}  {len(cont)} chars")
-            print(f"    {cont[:120].replace(chr(10), ' ')}")
+            print(i18n.t("inspect.hit_paragraph_entry", n=j + 1, score=sc, chars=len(cont)))
+            print(i18n.t("inspect.hit_paragraph_content", content=cont[:120].replace(chr(10), " ")))
 
+    print()
     if ctx.estimated_tokens > config.max_tokens:
         over = ctx.estimated_tokens - config.max_tokens
         pct = over / config.max_tokens * 100
-        print(f"\n[!] WARNING: {over} tokens over limit (+{pct:.1f}% overflow)")
+        print(i18n.t("inspect.warn_overflow", over=over, pct=pct))
     else:
         headroom = config.max_tokens - ctx.estimated_tokens
-        print(f"\n[OK] Within limit (headroom={headroom} tokens)")
+        print(i18n.t("inspect.ok_headroom", headroom=headroom))
 
     return 0

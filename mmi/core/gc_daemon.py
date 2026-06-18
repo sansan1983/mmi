@@ -19,6 +19,8 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import mmi.core._patterns
+
 log = logging.getLogger(__name__)
 
 __all__ = ["start_gc_daemon", "GcDaemonConfig", "DaemonGC", "_get_gc_daemon"]
@@ -60,7 +62,7 @@ class GcDaemonConfig:
 # 单例 DaemonGC
 # ---------------------------------------------------------------------------
 
-class DaemonGC:
+class DaemonGC(mmi.core._patterns.Singleton):
     """后台 GC 单例（线程安全单例模式）。
 
     属性：
@@ -68,29 +70,17 @@ class DaemonGC:
         gc_func: 实际执行的 GC 函数（可注入，供测试 mock）
     """
 
-    _instance: DaemonGC | None = None
-    _lock_init = threading.Lock()
-
     def __init__(
         self,
         config: GcDaemonConfig | None = None,
         gc_func: Callable | None = None,
     ) -> None:
-        self.config = config or GcDaemonConfig()
+        self.config = config if config is not None else self._load_config()
         self._gc_func = gc_func or self._default_gc
         self._thread: threading.Thread | None = None
         self._stop_event = threading.Event()
         self._chat_count = 0
         self._lock = threading.Lock()
-
-    @classmethod
-    def get_instance(cls: type[DaemonGC]) -> DaemonGC:
-        if cls._instance is None:
-            with cls._lock_init:
-                if cls._instance is None:
-                    cfg = cls._load_config()
-                    cls._instance = cls(config=cfg)
-        return cls._instance
 
     @classmethod
     def _load_config(cls) -> GcDaemonConfig:
@@ -115,8 +105,9 @@ class DaemonGC:
             cfg_mod.save_config(full)
         except Exception:
             pass
-        if cls._instance is not None:
-            cls._instance.config = cfg
+        inst = mmi.core._patterns.Singleton._instances.get(cls)  # type: ignore[attr-defined]
+        if inst is not None:
+            inst.config = cfg
 
     def _default_gc(self) -> None:
         """默认 GC：只扫 trash 超期 + zombie，不动 cold。"""

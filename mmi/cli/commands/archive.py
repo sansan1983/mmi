@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
-import sys
-
-from mmi.cli import ensure_mmi_home
+from mmi.cli import ensure_mmi_home, require_session
 from mmi.core import i18n
-from mmi.core import manager as mgr_module
 
 
 def cmd_archive(args, mgr) -> int:
     ensure_mmi_home()
-    try:
-        mgr.archive(args.session_id)
-    except mgr_module.SessionNotFound:
-        print(i18n.t("archive.unknown_session", session_id=args.session_id), file=sys.stderr)
-        return 2
+    _, code = require_session(args.session_id, mgr, code=2, err_key="archive.unknown_session")
+    if code:
+        return code
+    mgr.archive(args.session_id)
     print(i18n.t("archive.success", session_id=args.session_id))
     return 0

@@ -9,8 +9,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import Enum, auto
 from pathlib import Path
-from typing import ClassVar
 
+import mmi.core._patterns
 from mmi.core.paths import get_skills_dir
 
 
@@ -71,7 +71,7 @@ class Skill:
         return cls(**data)
 
 
-class SkillLibrary:
+class SkillLibrary(mmi.core._patterns.Singleton):
     """Global repository of skills, persisted to disk as JSON files.
 
     Storage layout::
@@ -83,19 +83,11 @@ class SkillLibrary:
     Thread safety is provided via an internal ``RLock``.
     """
 
-    _instance: ClassVar[SkillLibrary | None] = None
-
     def __init__(self, *, skills_dir: Path | None = None) -> None:
         self._skills: dict[str, Skill] = {}
         self._lock = threading.RLock()
         self._skills_dir = skills_dir or get_skills_dir()
         self._load_all()
-
-    @classmethod
-    def get_instance(cls) -> SkillLibrary:
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
 
     # ------------------------------------------------------------------
     # Persistence helpers
@@ -110,11 +102,13 @@ class SkillLibrary:
         return self._skills_dir / f"{safe}.json"
 
     def _save(self, skill: Skill) -> None:
-        """Write a single skill to disk (write-through)."""
+        """Write a single skill to disk (write-through, atomic)."""
+        from mmi.core.storage import atomic_write
         path = self._skill_path(skill.skill_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(skill.to_dict(), ensure_ascii=False, indent=2),
-                        encoding="utf-8")
+        atomic_write(
+            path,
+            json.dumps(skill.to_dict(), ensure_ascii=False, indent=2),
+        )
 
     def _delete_file(self, skill_id: str) -> None:
         """Remove the JSON file for *skill_id* (best-effort)."""

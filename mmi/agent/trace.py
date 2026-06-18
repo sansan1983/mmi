@@ -20,6 +20,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
+import mmi.core._patterns
 from mmi.core.paths import get_traces_dir
 
 if TYPE_CHECKING:
@@ -107,7 +108,7 @@ class TraceRecord:
         return cls(**data)
 
 
-class Tracer:
+class Tracer(mmi.core._patterns.Singleton):
     """Trace recorder with in-memory query support and disk persistence.
 
     Traces are:
@@ -116,8 +117,6 @@ class Tracer:
 
     Thread safety via internal ``RLock``.
     """
-
-    _instance: ClassVar[Tracer | None] = None
 
     def __init__(
         self,
@@ -140,15 +139,8 @@ class Tracer:
         self._traces_dir.mkdir(parents=True, exist_ok=True)
 
     @classmethod
-    def get_instance(cls) -> Tracer:
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
-
-    @classmethod
     def reset_instance(cls) -> None:
-        """测试用:清掉单例(避免测试间污染)。"""
-        cls._instance = None
+        mmi.core._patterns.Singleton.reset_instance()
 
     # ------------------------------------------------------------------
     # Persistence helpers
