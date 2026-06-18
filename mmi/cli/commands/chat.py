@@ -17,37 +17,8 @@ def cmd_chat(args: Namespace, mgr: SessionManager) -> int:
     if code:
         return code
 
-    # --inspect mode: preview prompt before entering loop
     if args.inspect:
-        from mmi.core import context as _loader
-
-        meta = storage.read_meta(sid)
-        config = _loader.LoaderConfig()
-        ctx = _loader.build_context_detailed(sid, "", config)
-        messages = _loader.compose_messages(ctx, "", config, language=args.lang or "zh-CN")
-        sys_msg = next((m for m in messages if m.get("role") == "system"), {})
-        sys_content = sys_msg.get("content", "") or ""
-        print("=" * 60)
-        print(i18n.t("chat.inspect.banner", sid=sid))
-        print("=" * 60)
-        print(i18n.t("chat.inspect.title", title=meta.title))
-        print(i18n.t("chat.inspect.state", state=meta.state))
-        print(i18n.t("chat.inspect.recent_turns", n=len(ctx.recent_turns)))
-        print(i18n.t("chat.inspect.hit_paragraphs", n=len(ctx.hit_turns)))
-        print(i18n.t("chat.inspect.token_limit", n=config.max_tokens))
-        print(i18n.t("chat.inspect.tokens_used", used=ctx.estimated_tokens, pct=ctx.estimated_tokens / config.max_tokens * 100))
-        print()
-        print(i18n.t("chat.inspect.system_prompt_label"))
-        print(i18n.t("chat.inspect.system_prompt_stats", chars=len(sys_content), tokens=_loader.estimate_tokens([sys_msg])))
-        print(i18n.t("chat.inspect.system_prompt_content", content=sys_content[:200]))
-        print()
-        if ctx.estimated_tokens > config.max_tokens * 0.8:
-            print(i18n.t("chat.inspect.warn_80pct", n=int(config.max_tokens * 0.8)))
-        else:
-            print(i18n.t("chat.inspect.ok_headroom", n=config.max_tokens - ctx.estimated_tokens))
-        print()
-        print(i18n.t("chat.inspect.hint", sid=sid))
-        return 0
+        return _chat_inspect(sid, args.lang)
 
     print(i18n.t("chat.welcome", session_id=sid))
     print(i18n.t("chat.echo_disabled"))
@@ -89,4 +60,37 @@ def cmd_chat(args: Namespace, mgr: SessionManager) -> int:
     except KeyboardInterrupt:
         print()
 
+    return 0
+
+
+def _chat_inspect(sid: str, lang: str | None) -> int:
+    """--inspect 模式：打印当前 prompt + token 预算诊断。"""
+    from mmi.core import context as _loader
+
+    meta = storage.read_meta(sid)
+    config = _loader.LoaderConfig()
+    ctx = _loader.build_context_detailed(sid, "", config)
+    messages = _loader.compose_messages(ctx, "", config, language=lang or "zh-CN")
+    sys_msg = next((m for m in messages if m.get("role") == "system"), {})
+    sys_content = sys_msg.get("content", "") or ""
+    print("=" * 60)
+    print(i18n.t("chat.inspect.banner", sid=sid))
+    print("=" * 60)
+    print(i18n.t("chat.inspect.title", title=meta.title))
+    print(i18n.t("chat.inspect.state", state=meta.state))
+    print(i18n.t("chat.inspect.recent_turns", n=len(ctx.recent_turns)))
+    print(i18n.t("chat.inspect.hit_paragraphs", n=len(ctx.hit_turns)))
+    print(i18n.t("chat.inspect.token_limit", n=config.max_tokens))
+    print(i18n.t("chat.inspect.tokens_used", used=ctx.estimated_tokens, pct=ctx.estimated_tokens / config.max_tokens * 100))
+    print()
+    print(i18n.t("chat.inspect.system_prompt_label"))
+    print(i18n.t("chat.inspect.system_prompt_stats", chars=len(sys_content), tokens=_loader.estimate_tokens([sys_msg])))
+    print(i18n.t("chat.inspect.system_prompt_content", content=sys_content[:200]))
+    print()
+    if ctx.estimated_tokens > config.max_tokens * 0.8:
+        print(i18n.t("chat.inspect.warn_80pct", n=int(config.max_tokens * 0.8)))
+    else:
+        print(i18n.t("chat.inspect.ok_headroom", n=config.max_tokens - ctx.estimated_tokens))
+    print()
+    print(i18n.t("chat.inspect.hint", sid=sid))
     return 0

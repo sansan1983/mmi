@@ -10,11 +10,11 @@
 
 | 项目 | 内容 |
 |------|------|
-| **当前阶段** | Phase 6 完成（公共 API 类型标注补全） |
-| **最近完成** | P6：补全 18 个 `cmd_X(args, mgr) -> int` 公共 API 类型标注（`args: argparse.Namespace, mgr: SessionManager`），8 个内部 helper（`_agent_list`/`_agent_invoke`/`_memory_clear`/`_memory_search`/`_skill_search`/`_skill_create`/`_config_wizard`）跟随父签名加标注；`_dispatch` + `_load_command` 同样加；统一 import `from argparse import Namespace` + `from mmi.core.manager import SessionManager` |
-| **下次动作** | P7 候选：i18n 化 7 个 LLM 提示词模板（`audit/classifier/llm/titler/summarizer/memory`）；或 P6 收尾 commit |
-| **代码质量** | ruff 0 errors ✅, pytest 690 pass ✅, 原子写 ✅, 单例线程安全 ✅, 时间工具统一 ✅, 子命令 dispatch 统一 ✅, 主入口 dispatch 字典化 ✅, chat pipeline 统一 ✅, llm 包化 ✅, memory 包化 ✅, tui_v3 包化 ✅, cmd_*.py i18n 化（13 文件,~120 处）✅, cmd_*.py 类型标注（18 公共 + 8 内部 + 2 dispatch）✅ |
-| **Git 提交** | P0+P1+P2-1~5+P3-A+B+C+D+E+P4+P5 改动 **已提交**（commit 1-4）；P6 改动 **未提交** |
+| **当前阶段** | Phase 7 完成（chat.py inspect 模式抽 helper） |
+| **最近完成** | P7：抽 `chat.py` 的 `--inspect` 模式 30 行诊断输出为私有 helper `_chat_inspect(sid, lang) -> int`。**Surgical 原则**：保留在 chat.py 内（无第二调用方，不污染 `cli/__init__.py`）；保留 `from mmi.core import context as _loader` 的 import 模式（cmd_chat 不需要，避免环依赖） |
+| **下次动作** | P8 候选：i18n 化 7 个 LLM 提示词模板（`audit/classifier/llm/titler/summarizer/memory`）；或 P7 收尾 commit |
+| **代码质量** | ruff 0 errors ✅, pytest 690 pass ✅, 原子写 ✅, 单例线程安全 ✅, 时间工具统一 ✅, 子命令 dispatch 统一 ✅, 主入口 dispatch 字典化 ✅, chat pipeline 统一 ✅, llm 包化 ✅, memory 包化 ✅, tui_v3 包化 ✅, cmd_*.py i18n 化（13 文件,~120 处）✅, cmd_*.py 类型标注（18 公共 + 8 内部 + 2 dispatch）✅, chat inspect 抽 helper（-29 行）✅ |
+| **Git 提交** | P0+P1+P2-1~5+P3-A+B+C+D+E+P4+P5+P6 改动 **已提交**（commit 1-5）；P7 改动 **未提交** |
 
 **已完成的 Phase 概览**：
 
@@ -28,8 +28,9 @@
 
 | 日期 | 动作 | 产出 |
 |------|------|------|
-| 2026-06-18 | P6：补全 cmd_*.py 公共 API 类型标注 | 18 个 `cmd_X(args: Namespace, mgr: SessionManager) -> int` + 8 个内部 helper（agent/memory/skill/config）+ `_dispatch`/`_load_command` 同样加。统一 `from argparse import Namespace` + `from mmi.core.manager import SessionManager` import 模式。1 个 commit：chore(annotations) |
-| 2026-06-18 | P5：i18n 化 `config.py` wizard 32 处 + show 3 处 | 38 词条（`wizard.*` 36 + `config_show.*` 2），含 banner/标题/错误/提示/双协议/单协议/api_key/拉模型/写盘/confirm suffix。format spec 保留（`{provider!r}` repr + `{k:10s}` 宽度）。完成铁律违反项全部清理 |
+| 2026-06-18 | P7：抽 `chat.py` `--inspect` 模式为 `_chat_inspect(sid, lang) -> int` 私有 helper | chat.py -29 行（30 行内联 → 1 行 dispatch + 30 行 helper）；cmd_chat 主路径更清晰；保留 `from mmi.core import context as _loader` lazy import 模式 |
+| 2026-06-18 | P6：补全 cmd_*.py 公共 API 类型标注 | 18 个 `cmd_X(args: Namespace, mgr: SessionManager) -> int` + 8 个内部 helper（agent/memory/skill/config）+ `_dispatch`/`_load_command` 同样加。统一 `from argparse import Namespace` + `from mmi.core.manager import SessionManager` import 模式 |
+| 2026-06-18 | P5：i18n 化 `config.py` wizard 32 处 + show 3 处 | 38 词条（`wizard.*` 36 + `config_show.*` 2），含 banner/标题/错误/提示/双协议/单协议/api_key/拉模型/写盘/confirm suffix。format spec 保留（`{provider!r}` repr + `{k:10s}` 宽度） |
 | 2026-06-18 | P4：i18n 化 12 个 cmd_*.py 硬编码 | 3 批完成。批 1（6 文件：memory/skill/stat/list/update/rename）~30 处；批 2（4 文件：info/inspect/agent/export）~45 处；批 3（2 文件：gc/chat inspect 模式）~19 处。补 70+ 词条到 `zh-CN.json`/`en-US.json`。跳过 `config.py` wizard 32 处（P5） |
 | 2026-06-18 | P3-D：拆 `core/memory.py` 978 行 → `core/memory/` 包 | 9 子模块（总 1033 行）+ `__init__.py` 155 行（PEP 562 `__getattr__` 转发）。store.py 改用 `_faiss_mod` 模块引用（避免 clear_memories 后 stale binding）。3 test monkeypatch 改 `memory.faiss._XXX`。顺手修 `memory_tools.py:72` 死代码（`from memory import search` 不存在） |
 | 2026-06-18 | P3-C：拆 `core/llm.py` 903 行 → `core/llm/` 包 | 7 子模块: `_types`(20行) / `base`(221行) / `echo`(47行) / `openai`(157行) / `anthropic`(257行) / `factory`(112行) / `ipc_stub`(17行) + `__init__.py` re-export(50行)。test mock 路径 6 处从 `mmi.core.llm.time.sleep` 改 `mmi.core.llm.base.time.sleep` |
